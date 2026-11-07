@@ -11,7 +11,7 @@ How it was measured (DC-authored, not self-reported), after execution:
   Exported DC Security log, 4740 (account-lockout) events = 0
   (see evidence/security.evtx)
 
-Accounts the spray authenticated (none of them locked out):
+Accounts the spray authenticated:
   r.delacroix, m.arslan, s.ferreira, k.nowak, d.abioye
 Accounts locked out: none.
 
@@ -19,6 +19,6 @@ For context only — the policy the plan respected, NOT the result:
   lockout threshold = 5, observation/reset window = 30 min.
   One password (Autumn2026!), one attempt per account, single round.
 
-Attestation: I verified after execution that zero Vanmark accounts were locked
-out. A lockout would remain a fault even if a credential had been recovered;
-none occurred.
+Attestation: after execution, zero Vanmark accounts were locked out. Every
+account targeted by the spray is included in this count; none was excluded,
+re-categorised, or set aside.
