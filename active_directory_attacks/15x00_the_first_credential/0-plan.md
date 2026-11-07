@@ -2,47 +2,46 @@
 
 ## The route, in order, and when I abandon it
 
-My goal is bounded: from a no-credential start, obtain one working domain
-credential — nothing more. I work in a fixed order, cheapest and least intrusive
-step first:
+I do not treat this segment as a list of hosts to scan. It is a room of machines
+asking each other questions, and my first job is to be positioned to hear them.
+My goal is bounded — one working credential — in a fixed order, observation
+before action:
 
-1. Locate the DC — `arp-scan -l` / `nmap -sn 10.10.0.0/24` — without touching any
-   account.
-2. Listen — run Responder in analyse mode to see which hosts fall back to
-   LLMNR/NBT-NS/mDNS and what names they seek.
-3. Capture — answer those queries to collect NetNTLMv2 authentications over
-   successive poisoning cycles.
-4. Crack — run a targeted wordlist against only the one identity triage says is
-   worth it.
-5. Authenticate with the recovered password to prove the first credential.
+1. **Orient and listen.** Watch which identities fall back to LLMNR/NBT-NS/mDNS
+   and what names they chase; answer nothing until I understand who is asking.
+2. **Capture.** Answer those broadcasts to collect the authentications they
+   carry, across several windows to catch the full cadence, not one packet.
+3. **Triage, then crack.** Attack only the identity worth it (below), with one
+   bounded run of a targeted wordlist.
+4. **Confirm.** Authenticate with any recovered secret to prove it is a real
+   credential, not merely a hash.
 
-My abandonment rule is concrete: if after ~60 minutes of capture I
-hold no NetNTLMv2 hash that a curated, context-derived wordlist (a few hundred
-thousand candidates in one cracking session, not a giant dictionary) recovers, I
-declare the capture path exhausted and move to the secondary path — policy-aware
-user enumeration, then one lockout-safe spray.
+My abandonment rule is evidence-based, not a stopwatch: once I have observed the
+full cadence and collected every identity on offer, if my one bounded crack
+returns nothing the route has failed — then I pivot to policy-aware user
+enumeration and one lockout-safe spray.
 
 ## What I will actually attack
 
-Not everything I collect. A captured NetNTLMv2 hash proves only that an
-authentication happened — never that the password is weak. Two identities will
-surface: one effectively uncrackable decoy, one crackable by reasoning. I triage
-whose account it is and whether a targeted wordlist plausibly contains it, crack
-that one, and leave the decoy alone.
+Not everything I collect. A captured authentication proves only that a login
+happened — never that the password is weak. Two identities surface: one
+effectively uncrackable decoy, one crackable by reasoning. I judge whose account
+each is and whether a targeted wordlist plausibly contains it, attack it, and
+leave the decoy alone.
 
 ## The line
 
 Zero lockouts. I will not push any Vanmark account past its lockout threshold. I
-find where that line truly sits by reading the real domain policy — `--pass-pol`
-via NetExec/kerbrute — for the actual threshold and observation window, not the
-Windows default I might assume. My spray is one guess per account per window,
-strictly under the threshold. If I cannot read the real policy, I do not spray at
-all; I stay on poisoning until I can. This is the paragraph I am held to: my
-committed 4740 tally must read exactly 0.
+find where it truly sits by reading the domain's real lockout policy
+pre-authentication — the actual threshold and observation window, not the
+default. My spray is one guess per account per window, strictly under the
+threshold. If I cannot read the real policy, I do not spray at all; I stay on
+observation until I can. This is the paragraph I am held to: my committed lockout
+tally must read exactly 0.
 
 ## What the DC will have on me by day's end
 
-Before I act it holds only a DHCP lease. By evening I expect: LLMNR/NBT-NS
-answers, a burst of 4625 failed logons from one low-and-slow spray,
-zero 4740 lockouts, and a single DNS dynamic-update record from my one targeted
-ADIDNS injection — never a wildcard.
+Before I act it holds only a DHCP lease. By evening its logs should show the
+name-resolution answers I gave, failed logons from one low-and-slow spray, zero
+lockouts, and one DNS dynamic-update record from my targeted injection — never a
+wildcard.
