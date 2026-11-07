@@ -1,0 +1,23 @@
+LOCKOUT RECORD — Task 4 (disciplined spray), vanmark.local
+===========================================================
+
+Committed lockout count: 0
+
+Source (DC-authored, not self-reported):
+  \\VNM-DC01\proofs$\lockout\lockout_count.txt = 0
+
+Corroboration:
+  Exported DC Security log — 4740 (account lockout) events: 0
+  (see evidence/security.evtx / 4740 count)
+
+Spray parameters (why it stayed under the line):
+  Real policy read: lockout threshold = 5, observation/reset window = 30 min
+  Shape: ONE password across the whole user list, ONE attempt per account,
+         single round, well under threshold-1
+  Password sprayed: Autumn2026!
+
+Result:
+  Authenticated (0 lockouts): r.delacroix, m.arslan, s.ferreira, k.nowak, d.abioye
+  Accounts locked out: none
+
+Attestation: no Vanmark account was locked out during this engagement.
