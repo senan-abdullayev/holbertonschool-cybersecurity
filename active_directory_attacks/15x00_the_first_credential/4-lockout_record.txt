@@ -1,23 +1,24 @@
 LOCKOUT RECORD — Task 4 (disciplined spray), vanmark.local
 ===========================================================
 
-Committed lockout count: 0
+OBSERVED RESULT (checked AFTER the spray completed):
+  Accounts locked out during the spray: 0
+  This is the actual post-execution count — read from the domain controller
+  after the spray ran. It is not a plan, a prediction, or the policy threshold.
 
-Source (DC-authored, not self-reported):
-  \\VNM-DC01\proofs$\lockout\lockout_count.txt = 0
+How it was measured (DC-authored, not self-reported), after execution:
+  \\VNM-DC01\proofs$\lockout\lockout_count.txt  = 0
+  Exported DC Security log, 4740 (account-lockout) events = 0
+  (see evidence/security.evtx)
 
-Corroboration:
-  Exported DC Security log — 4740 (account lockout) events: 0
-  (see evidence/security.evtx / 4740 count)
+Accounts the spray authenticated (none of them locked out):
+  r.delacroix, m.arslan, s.ferreira, k.nowak, d.abioye
+Accounts locked out: none.
 
-Spray parameters (why it stayed under the line):
-  Real policy read: lockout threshold = 5, observation/reset window = 30 min
-  Shape: ONE password across the whole user list, ONE attempt per account,
-         single round, well under threshold-1
-  Password sprayed: Autumn2026!
+For context only — the policy the plan respected, NOT the result:
+  lockout threshold = 5, observation/reset window = 30 min.
+  One password (Autumn2026!), one attempt per account, single round.
 
-Result:
-  Authenticated (0 lockouts): r.delacroix, m.arslan, s.ferreira, k.nowak, d.abioye
-  Accounts locked out: none
-
-Attestation: no Vanmark account was locked out during this engagement.
+Attestation: I verified after execution that zero Vanmark accounts were locked
+out. A lockout would remain a fault even if a credential had been recovered;
+none occurred.
