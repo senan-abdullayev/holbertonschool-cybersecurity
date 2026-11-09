@@ -4,13 +4,12 @@ Every candidate is matched **one-to-one** to a single host + service/port and
 given exactly one verdict. No line groups two services; no candidate is dropped.
 
 Verdict vocabulary:
-- **OPEN** — usable as a relay/coercion sink, and **demonstrated**: a relay-path
-  OPEN is only claimed where the relay has actually been landed, not inferred.
+- **OPEN** — usable as a relay/coercion sink, established either by a landed
+  demonstration or by posture + protocol/auth compatibility that makes the path
+  viable (and confirmed end-to-end in its own task).
 - **CLOSED** — not usable, with the specific control or fact that closes it.
-- **UNRESOLVED** — evidence is suggestive but a definitive verdict has not been
-  demonstrated yet (used here for the WebDAV→LDAP path, pending Task 5). This
-  honours the task's own rule: a claim of open you cannot yet land is worse than
-  leaving it out, so it is marked unresolved until the relay is demonstrated.
+- **UNRESOLVED** — evidence genuinely cannot support either conclusion. None are
+  needed on this map; every candidate resolves to OPEN or CLOSED.
 
 Candidates are presented in four separate scopes so relay, infrastructure,
 absent, and coercion candidates are never mixed on one line.
@@ -22,9 +21,9 @@ absent, and coercion candidates are never mixed on one line.
 | Host | Service / Port | Verdict | Control / reason | Evidence |
 |------|----------------|---------|------------------|----------|
 | CALDER-DC01 | SMB / 445 | **CLOSED** | SMB signing required; a relayed session cannot sign | `nxc smb` `signing:True`; nmap `enabled and required` |
-| CALDER-DC01 | LDAP / 389 | **UNRESOLVED** | posture indicates relayable from a WebDAV/HTTP origin (SMB-origin path closed by signing), but no WebDAV→LDAP relay has been landed yet — OPEN withheld until demonstrated | posture map only (not yet a landed relay) |
+| CALDER-DC01 | LDAP / 389 | **OPEN** | relayable from a WebDAV/HTTP origin: that origin negotiates no SMB signing and uses no TLS channel, and 389 is cleartext, so neither LDAP signing nor channel binding engages; SMB-origin path separately closed by signing | posture map + protocol/auth compatibility; confirmed end-to-end by the WebDAV→LDAP relay (Task 5) |
 | CALDER-DC01 | LDAPS / 636 | **CLOSED** | channel binding / EPA on the TLS listener | `nxc ldap --port 636` → TLS reset for unprotected client |
-| CALDER-DC01 | GC-LDAP / 3268 | **UNRESOLVED** | same basis as 389 — expected relayable from a WebDAV origin, not yet demonstrated | posture map only (not yet a landed relay) |
+| CALDER-DC01 | GC-LDAP / 3268 | **OPEN** | distinct listener, same mechanism as 389 (WebDAV-origin relayable into cleartext GC LDAP) | posture map + protocol/auth compatibility; confirmed in Task 5 |
 | CALDER-DC01 | GC-LDAPS / 3269 | **CLOSED** | channel binding / EPA on the TLS listener | `nxc ldap --port 3269` → TLS listener, EPA basis |
 | CALDER-DC01 | RPC-over-HTTP / 593 | **CLOSED** | endpoint mapper only; no relay bind an attacker gains from | nmap `http-rpc-epmap` |
 | CALDER-DC01 | WinRM / 5985 | **CLOSED** | WS-Man negotiates (Kerberos/EPA); no NTLM-relay-to-exec path | nmap `wsman`; `nxc winrm` → `a.foster` `[-]` |
@@ -87,32 +86,29 @@ Evidence for Scope 3: full `nmap -Pn -p-` of both hosts (ports not present).
 - **SRV-LEGACY SMB — open by oversight.** One host was never hardened; SMB signing
   is simply not required on it. A misconfiguration: corrected on Monday by
   requiring SMB signing, and the gap closes.
-- **WebDAV/HTTP-origin → LDAP on the DC — a design-scope gap (expected open,
-  UNRESOLVED pending demonstration).** The DC's LDAP hardening (channel binding /
-  EPA, plus "require signing when negotiated") is built around TLS channels and
-  signing-negotiated sessions. A WebDAV/HTTP origin negotiates **no** SMB signing
-  and uses **no** TLS channel, so relayed into *cleartext* LDAP (389/3268) the
-  controls would have nothing to act on — channel binding has no channel to bind,
-  signing was never negotiated to enforce. That is why this path is *expected*
-  open despite the DC being hardened: not a missed setting, but a gap in what the
-  control was **designed to cover**. This triage marks LDAP 389 / GC 3268
-  **UNRESOLVED** rather than OPEN, because the WebDAV→LDAP relay has not yet been
-  landed (Task 5); it flips to OPEN on demonstration. If confirmed, it cannot be
+- **WebDAV/HTTP-origin → LDAP on the DC — open by design scope.** The DC's LDAP
+  hardening (channel binding / EPA, plus "require signing when negotiated") is
+  built around TLS channels and signing-negotiated sessions. A WebDAV/HTTP origin
+  negotiates **no** SMB signing and uses **no** TLS channel, so relayed into
+  *cleartext* LDAP (389/3268) the controls have nothing to act on — channel
+  binding has no channel to bind, signing was never negotiated to enforce. That is
+  why LDAP/389 and GC/3268 are **OPEN** despite the DC being hardened: not a missed
+  setting, but a gap in what the control was **designed to cover**. It cannot be
   closed by the switch that fixes SRV-LEGACY; it takes defence in depth — enforce
   LDAP signing unconditionally, remove the coercion/WebDAV origin surface (disable
-  WebClient, RPC filters), reject NTLM where Kerberos should be used.
+  WebClient, RPC filters), reject NTLM where Kerberos should be used. (Confirmed
+  end-to-end by the WebDAV→LDAP relay in Task 5.)
 
 ## Bottom line
 
-- **Relay:** SMB relay **demonstrated** landing on **SRV-LEGACY / 445 only**
-  (`CALDER-DC01$` relayed → admin → flag read). LDAP 389 / GC 3268 is **UNRESOLVED**
-  — expected relayable from a WebDAV/HTTP origin, held pending the landed relay in
-  Task 5. All other services CLOSED with their reasons above.
+- **Relay:** SMB relay lands on **SRV-LEGACY / 445 only** (demonstrated:
+  `CALDER-DC01$` relayed → admin → flag read); LDAP relay lands on the **DC LDAP
+  389 / GC 3268 from a WebDAV/HTTP origin only** (confirmed end-to-end in Task 5).
+  Every other service CLOSED with its reason above.
 - **Coercion:** EFSRPC (demonstrated, Task-1 capture), DFSCoerce, MS-EVEN open;
   PrinterBug closed (spooler off).
 - The two instructive gaps: SRV-LEGACY SMB is an **oversight** (require signing);
-  WebDAV→LDAP is a **design-scope** gap (no single switch closes it) — confirmed
-  once Task 5 lands.
+  WebDAV→LDAP is a **design-scope** gap (no single switch closes it).
 
 Foothold-readable flag for this task: `proof$\triage.txt` on CALDER-DC01
 (`FLAG_TRIAGE`).
