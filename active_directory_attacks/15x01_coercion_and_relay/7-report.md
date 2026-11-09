@@ -102,39 +102,63 @@ contained.
 
 ---
 
-## 3. Remediation — per proven path, with operational cost
+## 3. Remediation — one specific, costed fix per proven path
 
-**3.1 SMB relay to SRV-LEGACY — this was an oversight.** One host was never
-hardened: SMB signing is not required on it.
-- **Control:** require SMB signing on SRV-LEGACY (and enforce it domain-wide by
-  GPO so no host is missed again).
-- **Cost:** low. Minor CPU overhead on SMB; verify no legacy client depends on
-  unsigned SMB before enforcing broadly.
-- **Conversation:** this is a configuration miss and closes cleanly on Monday.
+Each path we actually exercised is listed with the single control that closes it
+and what closing it costs Calder operationally. Paths P2 and P3 are the two
+relay legs; P1, P4, P5 are the enabling conditions we also proved.
 
-**3.2 WebDAV-origin relay into LDAP — this survives their hardening by design.**
-The DC's LDAP protections (channel binding / EPA, signing on signing-negotiated
-sessions) are built around TLS channels and signing-negotiated auth. A
-WebDAV/HTTP origin falls outside what those controls were shaped to cover. This
-is **not a mistake anyone made** — it is a gap in the design scope, and it needs
-a different, defence-in-depth conversation:
-- Enforce **LDAP signing unconditionally** on the DC (reject binds that did not
-  negotiate signing), not only "when negotiated."
-- Remove the coercion/WebDAV **origin surface**: disable the **WebClient**
-  service where it is not needed (it was enabled on SRV-LEGACY); apply **RPC
-  filters** to block the coercion interfaces (MS-EFSRPC, MS-DFSNM).
-- Reduce coercibility of the DC: RPC filters / EFSRPC mitigation so the DC cannot
-  be made to authenticate off-box.
-- Constrain self-service machine accounts: set `ms-DS-MachineAccountQuota = 0` so
-  ordinary users cannot stage the computer account RBCD needs.
-- **Cost:** moderate. Unconditional LDAP signing and RPC filters need a test pass
-  against line-of-business and legacy integrations; disabling WebClient and
-  setting MAQ=0 are low-risk in most estates. The payoff is that the surviving
-  relay path closes.
+**P1 — Coercion of CALDER-DC01 (MS-EFSRPC / PetitPotam open).** We made the DC
+authenticate off-box over EFSRPC.
+- **Specific control:** apply an **RPC filter** that blocks the MS-EFSRPC
+  interface (UUID `df1941c5-fe89-4e79-bf10-463657acf44d`) from untrusted sources
+  (and the same for MS-DFSNM and MS-EVEN, which also answered), plus the
+  Microsoft PetitPotam/EFSRPC registry mitigation.
+- **Cost:** low–moderate. Remote EFSRPC/DFSNM is rarely used by legitimate
+  clients, so impact is small, but the filter set must be tested (a mis-scoped
+  filter can block legitimate EFS/DFS management) and pushed via GPO/`netsh rpc filter`.
 
-The two conversations are different: 3.1 is "you missed a host, fix it"; 3.2 is
-"a control you deployed correctly does not cover this origin — here is the
-layered change that does."
+**P2 — SMB relay to SRV-LEGACY (SMB signing not required). This was an oversight.**
+- **Specific control:** set **"Microsoft network server: Digitally sign
+  communications (always) = Enabled"** on SRV-LEGACY, and enforce the same by GPO
+  domain-wide so no host is missed again.
+- **Cost:** low. Minor SMB CPU overhead; the only real work is confirming no
+  legacy client depends on unsigned SMB before broad enforcement. Closes cleanly.
+
+**P3 — WebDAV-origin relay into the DC's LDAP. This survives Calder's hardening by
+design, not by mistake.** Channel binding / EPA are TLS-scoped and the "require
+signing" setting only bites signing-negotiated sessions, so a WebDAV/HTTP origin
+into cleartext LDAP slips past both.
+- **Specific control:** set **"Domain controller: LDAP server signing
+  requirements = Require signing"** *and* **LDAP channel binding = Always**, so
+  the DC rejects any bind that is not integrity-protected regardless of origin —
+  not only when signing was negotiated.
+- **Cost:** moderate. This is the one change that needs a real compatibility test
+  pass: legacy or appliance LDAP clients that bind without signing will break and
+  must be fixed or exempted first. Highest operational care of the five, and the
+  one that closes the surviving relay.
+
+**P4 — Self-service computer account (`ms-DS-MachineAccountQuota = 10`) enabled the
+RBCD delegate.** `a.foster` created `QARELAY$` with no special rights.
+- **Specific control:** set **`ms-DS-MachineAccountQuota = 0`** domain-wide and
+  delegate machine-join to a controlled group/account instead.
+- **Cost:** low, but organisational: machine provisioning must move to a delegated
+  join account/workflow rather than any-user self-service.
+
+**P5 — RBCD write + S4U impersonation (the directory change and its spend).** The
+relay wrote `msDS-AllowedToActOnBehalfOfOtherIdentity` on SRV-LEGACY; S4U then
+impersonated Administrator.
+- **Specific control:** closing P3 and P4 removes the ability to *write* this
+  attribute via relay; in addition, **audit and alert on writes to
+  `msDS-AllowedToActOnBehalfOfOtherIdentity`** (Directory Service Changes, event
+  5136) so any future RBCD set is detected.
+- **Cost:** low. One audit subcategory + a detection rule; no production impact.
+
+The two **relay** paths require different conversations: **P2 is an oversight**
+("you missed a host — require signing, done Monday"); **P3 survives correct
+hardening by design** ("a control you deployed correctly does not cover this
+origin — here is the layered change that does"). One of them is not a mistake
+anybody made.
 
 ---
 
