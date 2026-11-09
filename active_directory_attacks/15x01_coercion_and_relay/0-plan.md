@@ -2,47 +2,55 @@
 
 ## What I establish before spending any authentication
 
-Before I coerce anything or fire a single relay, I fingerprint posture on both
-hosts with the foothold credential alone, in this order:
+Before I coerce or relay anything, I fingerprint posture on both hosts with the
+foothold credential alone:
 
-1. **Confirm the two hosts and services** — `nmap -sn 10.20.0.0/24`, then a
-   focused service scan of `10.20.0.10` (CALDER-DC01) and `10.20.0.20`
-   (SRV-LEGACY). Reachability is not viability; I only note what is listening.
-2. **SMB signing per host** — `nxc smb <host>`, read the `signing` field.
-   Signing *required* closes SMB-relay to that host. I expect the DC to require
-   it and SRV-LEGACY to have it off.
+1. **Confirm hosts/services** — `nmap -sn 10.20.0.0/24`, then a focused scan of
+   `.10` (CALDER-DC01) and `.20` (SRV-LEGACY). Reachability is not viability.
+2. **SMB signing per host** — `nxc smb`; signing *required* closes SMB-relay to
+   that host. I expect it required on the DC, off on SRV-LEGACY.
 3. **LDAP channel binding + EPA on the DC** — `nxc ldap` binding check. If
-   enforced, an SMB-origin relay into LDAP is closed; only a WebDAV/HTTP-origin
-   relay can satisfy the missing channel binding.
-4. **WebClient (WebDAV) presence** — confirm the coercion victim (SRV-LEGACY)
-   runs WebClient, since the HTTP-origin LDAP leg depends on it.
+   enforced, an SMB-origin LDAP relay is closed; only a WebDAV/HTTP origin
+   satisfies the missing channel binding.
+4. **WebClient (WebDAV)** — confirm the victim SRV-LEGACY runs it, since the
+   HTTP-origin LDAP leg depends on it.
 
-**What makes me call a target closed:** signing `required` in the `nxc` output
-closes SMB relay to it; channel binding/EPA enforced closes the SMB-origin LDAP
-relay. I record the observed field, not an assumption.
+**What makes me call a target closed** is the observed field, not an assumption:
+`signing: required` closes SMB relay; channel binding/EPA enforced closes the
+SMB-origin LDAP relay.
 
 ## When the first relay attempt fails
 
 A failed relay is triage data, not an endpoint. I return to the posture map,
-ask which modern default rejected it, and pivot the *origin* or the *target*
-accordingly — e.g. if SMB-origin to LDAP is refused on channel binding, switch
-to a WebDAV/HTTP origin. I never relay a victim back to itself, and I never
-claim a relay against the hardened DC.
+ask which modern default rejected it, and pivot the *origin* or *target* — if
+SMB-origin to LDAP is refused on channel binding, I switch to a WebDAV/HTTP
+origin. I never relay a victim to itself, nor claim a relay on the DC.
 
 ## The standard a finding must meet
 
-A relay path enters the report only when I have confirmed the *identity or
-position reached* at that hop — captured machine auth, code execution on
-SRV-LEGACY, the RBCD attribute written, the S4U ticket impersonating the
-privileged user. A command exiting 0 is not proof. If I believe a path exists
-but cannot demonstrate the reached identity, I write it as an **unproven
-hypothesis** with the specific evidence that is missing — never as a result.
+A relay path enters the report only when I confirm the *identity or position
+reached* at that hop — captured machine auth, exec on SRV-LEGACY, the RBCD write,
+the S4U ticket for the privileged user. A command exiting 0 is not proof. If I
+believe a path exists but cannot demonstrate the reached identity, I write it as
+an **unproven hypothesis** with the missing evidence named — not a result.
 
 ## What the DC will have recorded
 
-Before I begin, I expect the DC to end the engagement holding: my foothold
-logons, the coercion-trigger RPC calls, the authentication the coerced host
-sent, the machine account I stage (Powermad), and the
-`msDS-AllowedToActOnBehalfOfOtherIdentity` write plus the S4U/TGS requests.
-Those traces are the controls story — signing, EPA, channel binding, RPC
-filters — my review answers will map back to.
+I separate DC telemetry from what lives elsewhere: the coercion trigger
+(MS-EFSRPC/RPRN/DFSNM RPC call) hits the victim SRV-LEGACY and the captured
+authentication lands on my ntlmrelayx host — neither is a DC record. On
+CALDER-DC01, each record carries *account, source, destination, logon/auth type,
+object, operation, timestamp*:
+
+- **Logon (4624/4625):** the relayed LDAP auth — coerced machine account, from
+  my relay host IP, NTLM, logon type 3.
+- **Computer account created (4741):** Powermad's `New-MachineAccount`, caller
+  `a.foster`.
+- **Directory object modified (5136):** the
+  `msDS-AllowedToActOnBehalfOfOtherIdentity` write on the victim object (value
+  added).
+- **Kerberos TGS (4769) / S4U:** the S4U2Self/S4U2Proxy requests, impersonating
+  the privileged user.
+
+These DC records are the controls story my review answers map back to —
+signing, EPA, channel binding, RPC filters.
