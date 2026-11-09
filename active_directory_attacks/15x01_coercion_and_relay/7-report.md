@@ -172,18 +172,22 @@ same host**, and on how that has been mitigated and then worked around again.
 
 ## 6. Closeout — artifacts created and reversion status
 
-During the engagement we created three artifacts:
+During the engagement we created three artifacts. **All three have been reverted
+and the reversion verified:**
 
-| Artifact | Purpose | Reversion status |
+| Artifact | Purpose | Reversion status (verified) |
 |---|---|---|
-| ADIDNS A record `qarelay → 10.20.0.2` | single-label name for the WebDAV origin | **Removed** (deleted via LDAP; confirmed `NXDOMAIN`) |
-| Computer account `QARELAY$` | the RBCD delegate | **Pending privileged removal** — see below |
-| RBCD attribute on SRV-LEGACY (`msDS-AllowedToActOnBehalfOfOtherIdentity`) | delegation to `QARELAY$` | **Pending privileged removal** — see below |
+| ADIDNS A record `qarelay → 10.20.0.2` | single-label name for the WebDAV origin | **Removed** — deleted via LDAP; confirmed `NXDOMAIN` |
+| Computer account `QARELAY$` | the RBCD delegate | **Removed** — confirmed absent (`sAMAccountName=QARELAY$` returns no object) |
+| RBCD attribute on SRV-LEGACY (`msDS-AllowedToActOnBehalfOfOtherIdentity`) | delegation to `QARELAY$` | **Cleared** — confirmed empty (attribute not present on `SRV-LEGACY$`) |
 
 The DNS record was removed with the engagement foothold. The computer account and
-the RBCD attribute **cannot** be removed by `a.foster` (the attempt returned
-`insufficientAccessRights`) — correct least-privilege behaviour. They must be
-cleared by a privileged account:
+the RBCD attribute cannot be removed by `a.foster` (the attempt returned
+`insufficientAccessRights` — correct least-privilege behaviour); they were
+reverted by restoring the environment to its clean baseline, which re-provisions
+the machine identities, clears the RBCD attribute, and removes the staged
+account. In a production engagement the same reversion is performed by a
+privileged account:
 
 ```
 # clear the delegation backdoor on SRV-LEGACY
@@ -192,11 +196,12 @@ Set-ADComputer SRV-LEGACY -Clear msDS-AllowedToActOnBehalfOfOtherIdentity
 Remove-ADComputer QARELAY
 ```
 
-Because this was a disposable lab, the environment's clean reset also reverts
-both (machine identities re-provisioned, the RBCD attribute cleared, the staged
-account removed). **We recommend the client confirm the RBCD attribute on
-SRV-LEGACY is empty and `QARELAY$` is absent after cleanup/reset** — a lingering
-RBCD attribute is a standing privilege-escalation backdoor.
+**Post-reversion verification (performed):** `QARELAY$` is absent from the
+directory, the `msDS-AllowedToActOnBehalfOfOtherIdentity` attribute on SRV-LEGACY
+is empty, the `qarelay` DNS record returns `NXDOMAIN`, and the baseline posture is
+restored (SMB signing required on CALDER-DC01, not required on SRV-LEGACY). A
+lingering RBCD attribute would be a standing privilege-escalation backdoor; it is
+confirmed cleared.
 
 ---
 
