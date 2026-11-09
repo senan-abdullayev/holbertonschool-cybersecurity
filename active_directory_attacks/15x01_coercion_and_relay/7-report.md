@@ -75,30 +75,48 @@ a.foster (unprivileged)
 
 ---
 
-## 2. Impact — in terms of access, not technique
+## 2. Impact and scope — stated as resulting access
 
-What relaying a machine account's authentication bought, concretely: **full
-administrative control of SRV-LEGACY**, reached from an account that began with
-none. On that host an attacker can read any data, execute code, harvest cached
-credentials and the machine's own secrets, and use it as a pivot. The domain
-controller itself was **not** compromised — its hardening held throughout.
+This section states what access the engagement produced, not how it was produced.
 
-**Coerced domain controller vs coerced workstation — different categories.** A
-coerced *workstation or member server* yields that machine's authentication; its
-blast radius is whatever that one account is entitled to. A coerced *domain
-controller* is a different class of problem: a DC's machine account is highly
-privileged (it can replicate directory secrets), so relaying a DC's
-authentication to a target that honours that privilege can mean domain
-compromise, not single-host compromise.
+**Access gained.** The engagement ended with **local administrator /
+SYSTEM-equivalent access to SRV-LEGACY** (10.20.0.20), starting from an account
+(`a.foster`) that had no administrative access to anything. Concretely, that
+access means the holder can:
+- read and modify **any file and data at rest on SRV-LEGACY**, including the
+  admin-restricted data used as proof in this exercise;
+- **execute arbitrary code** on SRV-LEGACY as a privileged user;
+- read **all local secrets on SRV-LEGACY** — the local SAM database, LSA
+  secrets, any cached domain credentials, and the host's own machine-account key
+  (`SRV-LEGACY$`);
+- use SRV-LEGACY as a **pivot / foothold** for further internal movement.
 
-**Which category this engagement fell into.** We *coerced* the DC, but we
-*relayed* it to a member server where `CALDER-DC01$` was only a local admin —
-so the realised impact was bounded to SRV-LEGACY, not the domain. That boundary
-was our choice of target, not a protection Calder enforced. The relevant finding
-is that **the DC is coercible at all**: the same coerced DC authentication, taken
-to a more privileged destination, is the worse category. Treat DC coercibility as
-a high-priority exposure even though this engagement's realised impact was
-contained.
+**Scope — what is in and out of the attacker's reach as a result.**
+- **In reach:** SRV-LEGACY, completely (all data, code execution, all local
+  secrets on that host).
+- **Not reached:** **CALDER-DC01 and the domain.** The engagement produced **no
+  Domain Admin access, no directory-replication (DCSync) capability, and no
+  administrative access to the DC or to any other host.** The DC's hardening held
+  throughout; it was never compromised. Data on other systems is reachable only
+  by spending the SRV-LEGACY foothold in a further, separate step, not as a
+  direct result of this chain.
+
+**Why the scope matters — coerced DC vs coerced workstation.** The *category* of
+a coercion-and-relay compromise is defined by whose authentication you relay and
+where. A coerced **member server or workstation** yields access bounded to that
+one machine's entitlements — a single-host problem. A coerced **domain
+controller** is a different category: the DC's machine account can replicate
+directory secrets, so relaying a DC's authentication to a destination that
+honours that privilege yields **domain-wide** access, not single-host access.
+
+**Which category this engagement fell into.** Single-host. We coerced the DC but
+relayed its authentication to a member server where `CALDER-DC01$` holds only
+local-admin access — so the **resulting access was bounded to SRV-LEGACY, not the
+domain.** That boundary was the destination we chose, not a protection Calder
+enforced: because the DC is coercible, the same authentication relayed to a more
+privileged destination would yield the domain-wide category. **DC coercibility is
+therefore a high-priority exposure even though the access realised here was
+contained to one host.**
 
 ---
 
