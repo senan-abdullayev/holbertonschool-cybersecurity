@@ -1,128 +1,111 @@
 # 1 — Reading the Certificate Authority
 
-## Method
+## Method and scope
 
-Enumerated as the foothold `halstead.local\j.mercer` only (`certipy find` was used to read
-the objects, but each verdict below rests on the template's own enumerated fields —
-enrollment rights, name/enrollment flags, EKU, approval — and on what the DC does when a
-cert is presented, not on any scanner label). 38 templates exist; **16 are enabled**
-(published to `Halstead-Root-CA`) and are the live enrollment paths. The keystone wall is
-proven by an actual request + PKINIT; the two open template-paths are proven exploitable in
-Tasks 3–4; the rest are closed on fields observed during enumeration.
+Enumerated as the foothold `halstead.local\j.mercer` only. For **every** published template
+the same three things are mapped — (a) the **enrollment principals** (who may request it),
+(b) the **template fields** (enrollee-supplies-subject, EKU, enrollment flags, approval),
+and (c) **what the DC does at PKINIT** when such a cert is presented — so that closed paths
+are mapped as deliberately as the open ones, not skipped. `certipy find` read the objects;
+the verdicts rest on those enumerated fields and on the DC's behaviour, not on a scanner
+label.
 
-Exactly three verdicts, and every path carries exactly one:
+`Halstead-Root-CA` publishes **16 enabled templates** (of 38 defined). All 16 are mapped
+below; the 22 unpublished ones are accounted for at the end.
 
-- **OPEN** — open despite enforcement (the foothold can obtain a cert that authenticates as
-  someone else).
-- **WALLED** — closed by an enforcement control (strong mapping, approval, the enrollment
-  DACL, the EKU, or publication state), with the specific control named per path.
-- **DECOY** — a deceptive lookalike: carries a condition that resembles a known abuse case
-  but cannot be used to authenticate, for a stated reason.
+Every path receives exactly one verdict:
+- **OPEN** — open despite enforcement: the foothold can obtain a cert that authenticates as
+  another principal.
+- **WALLED** — closed by a named enforcement control (enrollment DACL, strong mapping,
+  approval, EKU, or publication state).
+- **DECOY** — a deceptive lookalike: carries an abuse-shaped condition but cannot
+  authenticate, for a stated reason.
 
-## Authority (CA) configuration
+## CA configuration and endpoints
 
-| Property | Value | Verdict / consequence |
+| Property | Value | Consequence |
 |---|---|---|
-| Web Enrollment | HTTP enabled, HTTPS disabled, no EPA | **OPEN** — `/certsrv` accepts NTLM over plain HTTP with no channel binding, so a relayed machine authentication is honoured. |
-| User-specified SAN (`EDITF_ATTRIBUTESUBJECTALTNAME2`) | Disabled | Not abusable — the CA will not honour an attacker SAN on a non-ESS template. |
-| ManageCA / ManageCertificates | Admins / Domain Admins / Enterprise Admins only | Not abusable — foothold has no CA-officer rights. |
-| Enroll (CA) | Authenticated Users | Normal. |
-| KDC strong mapping | `StrongCertificateBindingEnforcement = 2`; CA emits `szOID_NTDS_CA_SECURITY_EXT` | Active — an issued cert carries the requester's SID; the KDC binds on that SID, not on the SAN. |
+| Enrollment endpoints reachable | RPC (`\pipe\cert` on `HALSTEAD-CA01`, 445) **and** Web Enrollment `/certsrv` (HTTP) | Both reachable from the foothold / the segment. |
+| Web Enrollment | HTTP enabled, HTTPS disabled, **no EPA** | **OPEN (ESC8 surface).** `/certsrv` accepts NTLM over plain HTTP with no channel binding → a relayed machine authentication is honoured. |
+| User-specified SAN (`EDITF_ATTRIBUTESUBJECTALTNAME2`) | Disabled | No SAN injection on non-ESS templates (no ESC6). |
+| ManageCA / ManageCertificates | Admins / Domain Admins / Enterprise Admins | Foothold has no CA-officer rights (no ESC7). |
+| CA Enroll right | Authenticated Users | Normal. |
+| DC strong mapping | `StrongCertificateBindingEnforcement = 2`; CA emits `szOID_NTDS_CA_SECURITY_EXT` | An issued cert carries the **requester's SID**; at PKINIT the KDC binds on that SID, and only falls back to the UPN when the SID extension is absent. |
 
-## Custom templates
+## Complete reachable surface — all 16 published templates
 
-### 1. HalsteadWorkstationEnroll — **WALLED**
-Observed: `Enrollee Supplies Subject = True`, Client Authentication EKU, no approval,
-enrollment = Domain Users — i.e. the enrollee controls the subject and the cert can log on.
-That is the classic enrollee-supplies-subject condition, so it must be *tested*, not
-assumed. Measured:
+| # | Template | Enrollment principals | ESS | Logon EKU? | Approval / flags | DC at PKINIT | Verdict |
+|---|---|---|---|---|---|---|---|
+| 1 | HalsteadWorkstationEnroll | Domain Users | **Yes** | Yes (Client Auth) | none | SID ext = j.mercer ≠ `SAN UPN=administrator` → **`KDC_ERR_CLIENT_NAME_MISMATCH`** | **WALLED** (strong mapping) |
+| 2 | HalsteadVPNAccess | Domain Users | No | Yes (SC Logon + Client Auth) | **NoSecurityExtension** | no SID ext → KDC matches **UPN** → authenticates as that UPN | **OPEN** (no-SID gap) |
+| 3 | HalsteadServiceCert | Domain Users | No | Yes (Client Auth) | j.mercer has **Full Control** on the object | foothold can rewrite the template, then enrol a cert that logs on as the victim | **OPEN** (writable template) |
+| 4 | HalsteadMgrApproval | Domain Users | Yes | Yes (Client Auth) | **PendAllRequests** (approval) | never issued → PKINIT never reached | **WALLED** (approval) |
+| 5 | HalsteadCodeSign | Domain Users | Yes | **No** (Code Signing) | none | cert carries no logon EKU → not accepted for PKINIT | **DECOY** |
+| 6 | User | Domain Users, Domain/Enterprise Admins | No | Yes (Client Auth) | none | ESS=False → SID ext binds cert to **j.mercer** → logs on as self | **WALLED** (strong mapping) |
+| 7 | EFS | Domain Users, Domain/Enterprise Admins | No | **No** (Encrypting File System) | none | no logon EKU → not accepted for PKINIT | **WALLED** (EKU) |
+| 8 | Machine | Domain Computers, Domain/Enterprise Admins | No | Yes | none | foothold not an enrollment principal → cannot enrol | **WALLED** (enrollment DACL) |
+| 9 | DomainController | DCs, Domain/Enterprise Admins | No | Yes | none | foothold cannot enrol (a *coerced DC account* enrols it via the ESC8 relay — the CA-endpoint OPEN above, not this path) | **WALLED** (enrollment DACL) |
+| 10 | DomainControllerAuthentication | DCs, Domain/Enterprise Admins | No | Yes | none | foothold cannot enrol | **WALLED** (enrollment DACL) |
+| 11 | KerberosAuthentication | DCs, Domain/Enterprise Admins | No | Yes | none | foothold cannot enrol | **WALLED** (enrollment DACL) |
+| 12 | DirectoryEmailReplication | DCs, Domain/Enterprise Admins | No | **No** (DS Email Replication) | none | foothold cannot enrol | **WALLED** (enrollment DACL) |
+| 13 | SubCA | Domain/Enterprise Admins | Yes | No (no EKU) | none | foothold cannot enrol | **WALLED** (enrollment DACL) |
+| 14 | WebServer | Domain/Enterprise Admins | Yes | **No** (Server Auth) | none | foothold cannot enrol | **WALLED** (enrollment DACL) |
+| 15 | Administrator | Domain/Enterprise Admins | No | Yes (Client Auth) | none | foothold cannot enrol | **WALLED** (enrollment DACL) |
+| 16 | EFSRecovery | Domain/Enterprise Admins | No | **No** (File Recovery) | none | foothold cannot enrol | **WALLED** (enrollment DACL) |
+
+## The decided paths, in detail
+
+### HalsteadWorkstationEnroll — WALLED (strong mapping)
+The enrollee controls the subject and the EKU can log on — the classic abuse shape, so it is
+**tested, not assumed**:
 ```
 certipy req  ... -target HALSTEAD-CA01 -template HalsteadWorkstationEnroll \
                  -upn administrator@halstead.local   -> cert issued (SID extension = j.mercer's SID)
 certipy auth -pfx administrator.pfx -dc-ip 10.20.0.10 -> KDC_ERR_CLIENT_NAME_MISMATCH
 ```
-**Control that closes it: strong mapping.** The CA stamps the requester's SID
-(`1.3.6.1.4.1.311.25.2`); at PKINIT the KDC binds on that SID (j.mercer) rather than the
-supplied `SAN UPN=administrator`, and rejects the mismatch. Supplying a privileged name does
-not help — calling this exploitable would be a triage fault.
+The CA stamps the requester's SID (`1.3.6.1.4.1.311.25.2`); the KDC binds on that SID
+(j.mercer), not on the supplied `SAN UPN=administrator`, and rejects the mismatch. Supplying
+a privileged name does not help — calling this exploitable would be a triage fault.
 
-### 2. HalsteadVPNAccess — **OPEN**
-Observed: `Enrollment Flag = PublishToDs, NoSecurityExtension`, `Name Flag =
-SubjectAltRequireUpn`, Smart Card Logon + Client Authentication EKU, enrollment = Domain
-Users. **Why enforcement does not reach it:** the `NoSecurityExtension` flag means issued
-certs omit the SID extension — the exact field that walls #1 — so the KDC falls back to
-matching on the UPN. Prerequisite verified during enumeration: the foothold holds
-**GenericWrite over `svc-scan`** (BloodHound edge `J.MERCER → svc-scan`), i.e. a UPN it can
-set on a controllable account. Set `svc-scan`'s UPN to the victim, enrol here, and PKINIT
-returns the victim (demonstrated in Task 3).
+### HalsteadVPNAccess — OPEN (no-SID gap)
+`NoSecurityExtension` makes issued certs **omit** the SID extension — the exact field that
+walls WorkstationEnroll — so the KDC falls back to matching on the UPN. The foothold holds
+**GenericWrite over `svc-scan`** (BloodHound edge `J.MERCER → svc-scan`): set `svc-scan`'s
+UPN to the victim, enrol here, and PKINIT returns the victim (demonstrated in Task 3). This
+is the one published path enforcement does not reach.
 
-### 3. HalsteadServiceCert — **OPEN**
-Observed: `Enrollee Supplies Subject = False`, Client Authentication EKU, no approval — not
-abusable as it stands. **Why enforcement does not reach it:** the template's own object DACL
-grants `j.mercer` **Full Control / Write-Owner / Write-DACL**, so the foothold can rewrite
-the template into an exploitable state, enrol, and restore it (demonstrated in Task 4). The
-weakness is in the ACL enumerated on the object, not in its current flags.
+### HalsteadServiceCert — OPEN (writable template)
+The open vector is the template's **object DACL**, not its current flags: `j.mercer` holds
+**Full Control / Write-Owner / Write-DACL**. The foothold rewrites the template into an
+exploitable state (enrollee-supplies-subject, or NoSecurityExtension), enrols a cert that
+logs on as the victim, then restores the template (demonstrated in Task 4).
 
-### 4. HalsteadMgrApproval — **WALLED**
-Observed: `Enrollee Supplies Subject = True` + Client Authentication EKU — the **same
-enrollee-supplies-subject condition as #1**, which is why it has to be distinguished. **Control
-that closes it: manager approval.** `Enrollment Flag = PendAllRequests`
-(`Requires Manager Approval = True`): every request pends for a CA officer and never
-auto-issues, so the foothold obtains no usable cert.
+### HalsteadMgrApproval — WALLED (approval)
+Same enrollee-supplies-subject shape as WorkstationEnroll, which is why it must be
+distinguished. `PendAllRequests` (`Requires Manager Approval = True`) holds every request
+for a CA officer, so the foothold never obtains a cert.
 
-### 5. HalsteadCodeSign — **DECOY**
-Observed: `Enrollee Supplies Subject = True` — again the enrollee-controls-subject shape —
-but the EKU is **Code Signing only** (`Client Authentication = False`, no Smart Card Logon).
-It resembles the abusable case yet the issued cert carries no logon EKU, so it can never be
-used for Kerberos/PKINIT whatever subject is supplied. Viable for nothing here.
+### HalsteadCodeSign — DECOY
+Enrollee-controls-subject shape again, but the EKU is **Code Signing only** (no Client Auth,
+no Smart Card Logon). It resembles the abusable case yet the issued cert carries no logon
+EKU and can never be used for Kerberos/PKINIT whatever subject is supplied.
 
-## Default enabled templates — one verdict per path, from observed fields
+## Unpublished templates (not reachable) — WALLED (publication)
 
-| # | Template | Verdict | Observed field → control that decides it |
-|---|---|---|---|
-| 6 | User | **WALLED** | Enrollment = Domain Users and Client-Auth capable, but `ESS=False` → subject is built from the enrollee, so the SID extension binds the cert to **j.mercer**; it logs on as yourself. Closed by strong mapping. |
-| 7 | EFS | **WALLED** | Enrollment = Domain Users, but EKU = Encrypting File System only — no logon EKU, so the cert cannot authenticate to AD. Closed by the EKU. |
-| 8 | Machine | **WALLED** | Enrollment = Domain Computers / Admins; the foothold user is not in it. `ESS=False`. Closed by the enrollment DACL. |
-| 9 | DomainController | **WALLED** | Enrollment = DCs / Admins; foothold not in it. (A *coerced DC account* enrolls this via the relay — that OPEN finding is the CA web-enrollment row, not this foothold path.) Closed by the enrollment DACL. |
-| 10 | DomainControllerAuthentication | **WALLED** | Enrollment = DCs / Admins; foothold not in it. Closed by the enrollment DACL. |
-| 11 | KerberosAuthentication | **WALLED** | Enrollment = DCs / Admins; `ESS=False`, subject is the authenticating machine. Closed by the enrollment DACL. |
-| 12 | DirectoryEmailReplication | **WALLED** | Enrollment = DCs / Admins; EKU (DS Email Replication) is not a logon EKU. Closed by the enrollment DACL and EKU. |
-| 13 | SubCA | **WALLED** | `ESS=True` (the abusable shape) **but** enrollment = Domain / Enterprise Admins; foothold cannot enrol. Closed by the enrollment DACL. |
-| 14 | WebServer | **WALLED** | `ESS=True` but enrollment = Admins, and the Server Authentication EKU cannot client-auth. Closed by the enrollment DACL and EKU. |
-| 15 | Administrator | **WALLED** | Enrollment = Admins; `ESS=False`. Closed by the enrollment DACL. |
-| 16 | EFSRecovery | **WALLED** | Enrollment = Admins; File Recovery EKU is not a logon EKU. Closed by the enrollment DACL and EKU. |
-
-## Disabled templates — **WALLED**, one shared dispositive fact
-
-The following 22 were enumerated but each is `Enabled = False` (not published to
-`Halstead-Root-CA`): the CA will not process a request for any of them, so no enrollment
-path exists regardless of their flags — closed by publication state. `CA, CAExchange,
-CEPEncryption, CTLSigning, ClientAuth, CodeSigning, CrossCA, EnrollmentAgent,
+Enumerated but `Enabled = False` on `Halstead-Root-CA`: the CA will not process a request
+for any of them, so no enrollment path exists regardless of their flags. The 22: `CA,
+CAExchange, CEPEncryption, CTLSigning, ClientAuth, CodeSigning, CrossCA, EnrollmentAgent,
 EnrollmentAgentOffline, ExchangeUser, ExchangeUserSignature, IPSECIntermediateOffline,
 IPSECIntermediateOnline, KeyRecoveryAgent, MachineEnrollmentAgent, OCSPResponseSigning,
 OfflineRouter, RASAndIASServer, SmartcardLogon, SmartcardUser, UserSignature, Workstation`.
 
-## Summary
-
-| Path | Observed condition | Verdict |
-|---|---|---|
-| HalsteadVPNAccess | `NoSecurityExtension` + writable `svc-scan` UPN | **OPEN** |
-| HalsteadServiceCert | foothold Full-Control on the template object | **OPEN** |
-| CA web enrollment | HTTP, no EPA — relay target | **OPEN** |
-| HalsteadWorkstationEnroll | ESS + Client-Auth; PKINIT → object-SID mismatch | **WALLED** (strong mapping) |
-| HalsteadMgrApproval | ESS + Client-Auth; `PendAllRequests` | **WALLED** (approval) |
-| User | Client-Auth but `ESS=False` → maps to self | **WALLED** (strong mapping) |
-| EFS | non-logon EKU | **WALLED** (EKU) |
-| Machine, DomainController, DomainControllerAuthentication, KerberosAuthentication, DirectoryEmailReplication, SubCA, WebServer, Administrator, EFSRecovery | enrollment DACL excludes the foothold | **WALLED** (enrollment DACL) |
-| 22 disabled templates | not published | **WALLED** (publication) |
-| HalsteadCodeSign | ESS but Code-Signing-only EKU | **DECOY** |
-
 ## Key observation
 
-Three enabled templates share the enrollee-supplies-subject condition, and each is decided
-by a different control: **HalsteadWorkstationEnroll** by strong mapping (measured
-`KDC_ERR_CLIENT_NAME_MISMATCH`), **HalsteadMgrApproval** by approval, **HalsteadCodeSign**
-by a non-logon EKU. The single path enforcement does not reach is **HalsteadVPNAccess**,
-whose `NoSecurityExtension` removes the SID field the wall depends on — which, with the
-writable `svc-scan` UPN, is OPEN and begins the chain. The discipline is to separate these
-by what the DC actually consults, not by how the template looks.
+Across the whole published surface only two template-paths are **OPEN** — HalsteadVPNAccess
+(no SID extension) and HalsteadServiceCert (writable object) — plus the CA's **OPEN** web
+-enrollment endpoint (ESC8). Everything else is **WALLED** by a specific control
+(enrollment DACL for the stock templates, strong mapping for WorkstationEnroll and User,
+approval for MgrApproval), with one **DECOY** (CodeSign). Three enabled templates share the
+enrollee-supplies-subject shape and are each decided by a *different* control — strong
+mapping, approval, EKU — which is why the triage turns on what the DC actually consults, not
+on how a template looks.
