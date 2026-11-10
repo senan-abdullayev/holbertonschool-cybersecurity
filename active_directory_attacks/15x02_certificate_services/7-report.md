@@ -107,44 +107,70 @@ not the distance travelled — is what makes it critical.
 
 ## 3. Remediation
 
-### 3.1 Per proved path — the control and its operational cost
+Each proved path needs **two** actions: **close it** so it cannot be used again, and **clean
+the lasting effect** it already produced. The second half is the one that gets dropped in
+the remediation meeting — and for certificate attacks it is the half that matters, because
+closing a template does nothing to a certificate already issued or to credentials already
+replicated out.
 
-- **ESC8 (web-enrollment relay).** Put **HTTPS + EPA (channel binding)** on `/certsrv` and
-  stop accepting NTLM there; disable web enrollment entirely if it is not used. *Cost:*
-  deploy a TLS certificate and reconfigure IIS on the one CA host; enrollment clients must
-  move to HTTPS. Low–moderate, single server.
-- **ESC9 (no SID extension + writable UPN).** Two parts: remove
-  `CT_FLAG_NO_SECURITY_EXTENSION` from `HalsteadVPNAccess` unless a genuine interop need
-  requires it (and if it does, use an explicit **strong** `altSecurityIdentities` mapping
-  instead of implicit UPN); and remove the **GenericWrite** that lets a low-privilege
-  account write `userPrincipalName` on `svc-scan`. *Cost:* review smartcard/VPN enrollment
-  for templates that legitimately need the flag; audit write access to `userPrincipalName`
-  across the directory. Low–moderate.
-- **ESC4 (writable template).** Tighten the `HalsteadServiceCert` object DACL — remove the
-  Full-Control / Write-DACL / Write-Owner grants held by non-administrators. *Cost:*
-  minimal; a delegation correction.
-- **The control already working — keep it.** `StrongCertificateBindingEnforcement = 2` plus
-  the CA emitting the SID extension is exactly what walls the classic attack. Maintain full
-  enforcement and the patch level that provides the extension; do not regress to
-  compatibility mode.
+### 3.1 Per proved path — close it, and clean its residue
 
-### 3.2 Separately — the certificates that already exist
-Every control above fixes *future* issuance. **None of them invalidates a certificate
-already issued.** The certificates minted during this engagement remain valid on their own
-terms until they expire (up to a year), and will continue to authenticate — including after
-any password reset. Halstead must, as a distinct action:
+**ESC8 — web-enrollment relay.**
+- *Close:* enforce **HTTPS + EPA (channel binding)** on `/certsrv`, stop accepting NTLM
+  there, and require encrypted certificate requests on the CA; disable web enrollment
+  entirely if it is unused. *Cost:* a TLS certificate and an IIS reconfiguration on the one
+  CA host; enrollment clients move to HTTPS. Low–moderate, single server.
+- *Clean:* revoke the DC certificate it produced (`halstead-dc01.pfx`, request 18). Its
+  lasting effect is **not one certificate** — this path reached DCSync, so its residue is
+  exposed domain credentials, handled in §3.2.B.
 
-1. **Revoke every certificate issued during the engagement** at the CA (by request ID /
-   serial — see §5), with reason code *Key Compromise*.
-2. **Publish an updated CRL immediately** (and ensure the KDC performs revocation checking)
-   so the revocations take effect rather than sitting in a CA nobody reads.
-3. For the **DC machine certificate** specifically, treat it as the highest priority: if any
-   doubt remains about scope, consider rotating what the certificate ultimately exposed
-   (the compromised account credentials via DCSync) and reviewing `NTAuthCertificates`.
+**ESC9 — no SID extension + writable UPN.**
+- *Close:* remove `CT_FLAG_NO_SECURITY_EXTENSION` from `HalsteadVPNAccess` (or, if a genuine
+  interop need requires it, replace implicit UPN mapping with an explicit **strong**
+  `altSecurityIdentities` mapping); and remove the **GenericWrite** that let a low-privilege
+  account write `userPrincipalName` on `svc-scan`. *Cost:* review of smartcard/VPN enrollment
+  and of write access to `userPrincipalName` directory-wide. Low–moderate.
+- *Clean:* revoke the `pki.operator` certificate (request 15), and **reset `pki.operator`'s
+  password** to a value of Halstead's choosing (the engagement reset it — §5).
 
-This is the step that will not come up in the remediation meeting, because the instinct is
-"we fixed the templates." The templates were only how the certificates were obtained; the
-certificates are the access.
+**ESC4 — writable template.**
+- *Close:* remove the Full-Control / Write-DACL / Write-Owner grants held by
+  non-administrators on the `HalsteadServiceCert` template object. *Cost:* a delegation
+  correction, minimal.
+- *Clean:* revoke the `helpdesk.svc` certificate (request 16) and the no-identity
+  certificate issued in passing (`j.mercer.pfx`). The template itself is **already restored
+  and verified** (§5).
+
+**The wall already doing its job — keep it.** `StrongCertificateBindingEnforcement = 2` plus
+the CA emitting the SID extension is what kills the classic attack; maintain full enforcement
+and the patch level that provides the extension, and do not regress to compatibility mode.
+*Clean:* revoke the wall-test certificate (request 13) — it was issued even though it could
+not authenticate.
+
+### 3.2 The lasting effects that outlive every fix above
+
+**A. Every certificate already issued.** None of the controls in §3.1 invalidates a
+certificate that exists; each remains valid on its own terms, for up to a year, and keeps
+authenticating — including after any password reset. Revoke all five (§5) at the CA by
+request ID / serial with reason *Key Compromise*, **publish an updated CRL immediately**,
+and ensure the KDC performs revocation checking — a revocation sitting in an unread CA
+changes nothing. Review `NTAuthCertificates` after revoking the DC-capable certificate.
+
+**B. The domain is credential-compromised, not one-account-reset.** The relay chain ended in
+**DCSync**, which replicates secrets out of the directory. Treat every privileged secret as
+exposed: reset the **Administrator** password, reset **every account whose hash was
+replicated**, and **rotate the `krbtgt` account twice** (replication exposes its key, which
+enables forged tickets). A single password reset does not undo a DCSync — this is the action
+that closes the domain-level residue, and it is distinct from revoking certificates.
+
+**C. The persistence certificate specifically.** `pki.operator`'s certificate authenticated
+*after* its password was reset and will keep doing so until it is **revoked** and the CRL is
+published. Revocation — not the reset Halstead already performed — is what ends that access.
+
+The pattern across A–C: fixing *how* the certificates were obtained does not remove the
+certificates. The configuration was the door; the certificates are the keys that were cut,
+and the replicated hashes are the master copy — all of them keep working until they are
+explicitly revoked or rotated.
 
 ---
 
