@@ -107,70 +107,75 @@ not the distance travelled — is what makes it critical.
 
 ## 3. Remediation
 
-Each proved path needs **two** actions: **close it** so it cannot be used again, and **clean
-the lasting effect** it already produced. The second half is the one that gets dropped in
-the remediation meeting — and for certificate attacks it is the half that matters, because
-closing a template does nothing to a certificate already issued or to credentials already
-replicated out.
+For **every** path proved, three separate actions, stated the same way each time: the
+**preventive control** that closes it, its **operational cost**, and the **already-issued
+certificates to invalidate** (by serial — the authoritative revocation key; full serials in
+§5.2). Then, in §3.2, the lasting effects that no template change touches.
 
-### 3.1 Per proved path — close it, and clean its residue
+### 3.1 Per proved path
 
-**ESC8 — web-enrollment relay.**
-- *Close:* enforce **HTTPS + EPA (channel binding)** on `/certsrv`, stop accepting NTLM
-  there, and require encrypted certificate requests on the CA; disable web enrollment
-  entirely if it is unused. *Cost:* a TLS certificate and an IIS reconfiguration on the one
-  CA host; enrollment clients move to HTTPS. Low–moderate, single server.
-- *Clean:* revoke the DC certificate it produced (`halstead-dc01.pfx`, request 18). Its
-  lasting effect is **not one certificate** — this path reached DCSync, so its residue is
-  exposed domain credentials, handled in §3.2.B.
+**ESC8 — web-enrollment relay**
+- **Preventive control:** enforce HTTPS + EPA (channel binding) on `/certsrv`; stop
+  accepting NTLM there; require encrypted certificate requests at the CA; disable web
+  enrollment if it is unused.
+- **Operational cost:** one TLS certificate and an IIS reconfiguration on the single CA
+  host; enrollment clients move to HTTPS. Low–moderate.
+- **Certificates to invalidate:** the DC certificate — serial `…000012` (request 18,
+  `halstead-dc01.pfx`). Its deeper residue is domain-wide, handled in §3.2.B.
 
-**ESC9 — no SID extension + writable UPN.**
-- *Close:* remove `CT_FLAG_NO_SECURITY_EXTENSION` from `HalsteadVPNAccess` (or, if a genuine
-  interop need requires it, replace implicit UPN mapping with an explicit **strong**
-  `altSecurityIdentities` mapping); and remove the **GenericWrite** that let a low-privilege
-  account write `userPrincipalName` on `svc-scan`. *Cost:* review of smartcard/VPN enrollment
-  and of write access to `userPrincipalName` directory-wide. Low–moderate.
-- *Clean:* revoke the `pki.operator` certificate (request 15), and **reset `pki.operator`'s
-  password** to a value of Halstead's choosing (the engagement reset it — §5).
+**ESC9 — no SID extension + writable UPN**
+- **Preventive control:** remove `CT_FLAG_NO_SECURITY_EXTENSION` from `HalsteadVPNAccess`
+  (or, if interop genuinely requires it, use a strong explicit `altSecurityIdentities`
+  mapping instead of implicit UPN); and remove the GenericWrite that lets a low-privilege
+  account write `userPrincipalName` on `svc-scan`.
+- **Operational cost:** review of any smartcard/VPN template that genuinely needs the flag,
+  plus a directory-wide audit of write access to `userPrincipalName`. Low–moderate.
+- **Certificates to invalidate:** the `pki.operator` certificate — serial `…00000F`
+  (request 15, `pki.operator.pfx`), which is also the persistence certificate (§3.2.C). Also
+  reset `pki.operator`'s password to a value of Halstead's choosing (the engagement reset
+  it — §5.1).
 
-**ESC4 — writable template.**
-- *Close:* remove the Full-Control / Write-DACL / Write-Owner grants held by
-  non-administrators on the `HalsteadServiceCert` template object. *Cost:* a delegation
-  correction, minimal.
-- *Clean:* revoke the `helpdesk.svc` certificate (request 16) and the no-identity
-  certificate issued in passing (`j.mercer.pfx`). The template itself is **already restored
-  and verified** (§5).
+**ESC4 — writable template**
+- **Preventive control:** remove the Full-Control / Write-DACL / Write-Owner grants held by
+  non-administrators on the `HalsteadServiceCert` template object.
+- **Operational cost:** a single delegation correction. Minimal.
+- **Certificates to invalidate:** the `helpdesk.svc` certificate — serial `…000011`
+  (request 17, `helpdesk.svc.pfx`) — and the no-identity certificate issued before
+  reconfiguration — serial `…000010` (request 16, `j.mercer.pfx`). The template itself is
+  already restored and verified (§5.1).
 
-**The wall already doing its job — keep it.** `StrongCertificateBindingEnforcement = 2` plus
-the CA emitting the SID extension is what kills the classic attack; maintain full enforcement
-and the patch level that provides the extension, and do not regress to compatibility mode.
-*Clean:* revoke the wall-test certificate (request 13) — it was issued even though it could
-not authenticate.
+**The wall already working — maintain, do not regress.**
+- **Preventive control:** keep `StrongCertificateBindingEnforcement = 2` and the CA emitting
+  the SID extension; keep the patch level that provides it.
+- **Operational cost:** none beyond ordinary patch maintenance.
+- **Certificates to invalidate:** the wall-test certificate — serial `…00000E` (request 14,
+  `administrator.pfx`) — issued even though it could not authenticate.
 
-### 3.2 The lasting effects that outlive every fix above
+### 3.2 Lasting effects beyond the per-path fixes
 
 **A. Every certificate already issued.** None of the controls in §3.1 invalidates a
-certificate that exists; each remains valid on its own terms, for up to a year, and keeps
-authenticating — including after any password reset. Revoke all five (§5) at the CA by
-request ID / serial with reason *Key Compromise*, **publish an updated CRL immediately**,
-and ensure the KDC performs revocation checking — a revocation sitting in an unread CA
-changes nothing. Review `NTAuthCertificates` after revoking the DC-capable certificate.
+certificate that already exists; each stays valid on its own terms, for up to a year, and
+keeps authenticating — including after any password reset. Revoke **all five** (§5.2) at the
+CA by serial with reason *Key Compromise*, **publish an updated CRL immediately**, and
+ensure the KDC performs revocation checking — a revocation sitting in an unread CA changes
+nothing. Review `NTAuthCertificates` after revoking the DC-capable certificate.
 
 **B. The domain is credential-compromised, not one-account-reset.** The relay chain ended in
 **DCSync**, which replicates secrets out of the directory. Treat every privileged secret as
 exposed: reset the **Administrator** password, reset **every account whose hash was
 replicated**, and **rotate the `krbtgt` account twice** (replication exposes its key, which
-enables forged tickets). A single password reset does not undo a DCSync — this is the action
-that closes the domain-level residue, and it is distinct from revoking certificates.
+enables forged tickets). A single password reset does not undo a DCSync — this is distinct
+from, and additional to, revoking certificates.
 
-**C. The persistence certificate specifically.** `pki.operator`'s certificate authenticated
-*after* its password was reset and will keep doing so until it is **revoked** and the CRL is
-published. Revocation — not the reset Halstead already performed — is what ends that access.
+**C. The persistence certificate specifically.** `pki.operator`'s certificate (serial
+`…00000F`) authenticated *after* its password was reset and will keep doing so until it is
+**revoked** and the CRL is published. Revocation — not the reset already performed — is what
+ends that access.
 
-The pattern across A–C: fixing *how* the certificates were obtained does not remove the
-certificates. The configuration was the door; the certificates are the keys that were cut,
-and the replicated hashes are the master copy — all of them keep working until they are
-explicitly revoked or rotated.
+The pattern across A–C: fixing *how* the certificates were obtained removes none of them.
+The configuration was the door; the certificates are the keys already cut, and the
+replicated hashes are the master copy — all keep working until explicitly revoked or
+rotated.
 
 ---
 
@@ -233,21 +238,25 @@ carelessly next quarter will not announce which condition it meets; reading thes
 - The `svc-scan` **shadow credential** (`msDS-KeyCredentialLink`) added during ESC9 was
   **removed** and its `userPrincipalName` **reverted** to `svc-scan@halstead.local`.
 
-### 5.2 Certificates issued — revoke all of these
-Revoke each at the CA by request ID / serial; the CA's issued-certificate database is the
-authoritative source. Reason code: *Key Compromise*. Then publish the CRL.
+### 5.2 Certificates issued — the complete set, revoke every one
+This is the **exhaustive** list of certificates the engagement caused `Halstead-Root-CA` to
+issue — five, no others. Each serial is read from the certificate itself (the `.pfx` on disk
+is the evidence), so Halstead can revoke by serial directly, without matching on subject or
+time. Revoke each with reason code *Key Compromise*, then publish the CRL.
 
-| # | Template | Subject / identity | Request ID | File | Note |
+| Req ID | Serial (revocation key) | Template | Identity in cert | File | Role |
 |---|---|---|---|---|---|
-| 1 | HalsteadWorkstationEnroll | UPN `administrator` | 13 | `administrator.pfx` | wall-test request; issued but non-authenticating — **still revoke** |
-| 2 | HalsteadVPNAccess | UPN `pki.operator` | 15 | `pki.operator.pfx` | **live & used for persistence — highest urgency after the DC cert** |
-| 3 | HalsteadServiceCert | UPN `helpdesk.svc` | 16 | `helpdesk.svc.pfx` | issued while template was weakened |
-| 4 | HalsteadServiceCert | (no identity) | — | `j.mercer.pfx` | intermediate request before reconfiguration — revoke for completeness |
-| 5 | DomainController | `HALSTEAD-DC01$` | 18 | `halstead-dc01.pfx` | **DC-capable — revoke first; review `NTAuthCertificates`** |
+| 14 | `180000000EFAEBF6026B153CEB00000000000E` | HalsteadWorkstationEnroll | SAN UPN `administrator` | `administrator.pfx` | wall-test — issued, cannot authenticate; revoke anyway |
+| 15 | `180000000F6E914CFC8176A33500000000000F` | HalsteadVPNAccess | SAN UPN `pki.operator` | `pki.operator.pfx` | **the persistence certificate** — still authenticates after the password reset |
+| 16 | `180000001063B22D7AB9E5352D000000000010` | HalsteadServiceCert | none (no SAN identity) | `j.mercer.pfx` | intermediate request before the template was reconfigured |
+| 17 | `1800000011C49CD4BD847E5EEA000000000011` | HalsteadServiceCert | SAN UPN `helpdesk.svc` | `helpdesk.svc.pfx` | issued while the template was weakened |
+| 18 | `18000000123A2A1AABDE0AB64A000000000012` | DomainController | `HALSTEAD-DC01$` (DC machine) | `halstead-dc01.pfx` | **DC-capable** — the certificate that reached the domain |
 
-Shadow-credential certificates used in ESC9 were ephemeral Key Credentials on `svc-scan`,
-already removed; they were never issued by the CA and need no revocation.
+Nothing else was issued. The shadow credential used in ESC9 was an ephemeral Key Credential
+written to `svc-scan` and already removed (§5.1); it was never a CA-issued certificate and
+needs no revocation.
 
-**Priority order for revocation:** #5 (DC) → #2 (persistence) → #3 → #1 → #4. A certificate
-is a credential the domain will honour until it is revoked; closing the templates does not
-close these.
+**Revocation priority:** serial `…000012` (DC, req 18) first, then `…00000F` (persistence,
+req 15), then `…000011`, `…00000E`, `…000010`. Each of these authenticates — or, for the two
+that cannot, still exists on the CA — until it is explicitly revoked and the CRL is
+published; closing the templates does not close these.
