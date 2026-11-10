@@ -2,39 +2,41 @@
 
 ## What I establish before I touch anything
 
-I do not assume Halstead's posture from the advisory default. I measure it on this
-domain controller. First I enumerate the live PKI with a read-only pass against the
-CA and templates, recording for each template the enrollment rights, the manager-
-approval flag, whether the enrollee supplies the subject, the EKUs, and — decisively —
-whether the issued certificate carries the SID security extension (szOID
-1.3.6.1.4.1.311.25.2). Then I test enforcement empirically: I request a certificate
-from a template that *looks* like the classic subject-supply case and attempt
-certificate-based authentication with it. If the KDC rejects it with an object-SID
-mismatch, strong certificate mapping is live and that family is walled here, on this
-DC — not "probably patched per the bulletin." That rejection is the ground truth I
-build the rest of the engagement on.
+I measure Halstead's posture on this domain controller, not the advisory default.
+A read-only pass over the live PKI records, per template, enrollment rights, approval
+flag, subject-supply flag, EKUs, and — decisively — whether the issued certificate
+carries the SID security extension (szOID 1.3.6.1.4.1.311.25.2). Then I test enforcement:
+I request from a template that *looks* like classic subject-supply and authenticate with
+it. A KDC object-SID mismatch means strong mapping is live and that family
+is walled here, on this DC — not merely "patched per the bulletin."
 
 ## The bar a path must clear, and what I write when it fails
 
 A path enters my findings only when I have authenticated as the target identity and
-confirmed it — read the ACL-gated proof, or shown the reached principal — not because
-a request returned success. At least one template here will look exactly like the
-famous technique everybody knows; recognising that it is walled, and refusing to spend
-the week on it, is the discipline I commit to now. A path I believe exists but cannot
-land I record separately as a hypothesis: what I expected, the exact step that failed,
-and the enforcement that stopped it. I do not launder a plausible idea into a
-confirmed finding.
+confirmed it — ACL-gated proof read, or the reached principal shown — not on a
+successful request. One template will look exactly like the famous technique;
+recognising it is walled rather than burning the week is the discipline I commit to now. A path I cannot land I log as a hypothesis — expectation, failing step, the
+enforcement that stopped it — never laundered into a finding.
 
 ## What I change, and how I prove I restored it
 
-Any template I reconfigure to exploit it, I snapshot first (full configuration export)
-and restore to that exact state afterward, then re-read it to prove the restore landed.
-Issued test certificates and any UPN or shadow-credential changes are reverted as part
-of the workflow. Hardened templates leave the engagement hardened.
+Every mutation to the CA or directory goes in a change register — one row per change,
+written *before* I touch the object. Each row records the exact target (template or
+account distinguished name; the specific attribute or permission, e.g.
+`msPKI-Certificate-Name-Flag`, `nTSecurityDescriptor`, `userPrincipalName`,
+`msDS-KeyCredentialLink`) and the captured original value, exported in full before
+mutation. That capture is the rollback source, so no restore relies on memory.
+
+After restoring, I prove it per item, not in bulk. For each row I do an independent
+read-back — re-read the same attribute/ACL from the live object and compare it to the
+pre-change capture — keeping both captures in `evidence/` as proof. Side effects are
+reverted individually and checked the same way: each test certificate revoked and
+confirmed revoked on the CA; each added UPN reset to its original string; each shadow
+`msDS-KeyCredentialLink` entry removed and the attribute re-read to confirm it is empty.
+No change is closed until its read-back matches its original capture.
 
 ## What the CA and DC will have on me
 
-By the end, the CA will hold request and issuance records (events 4886/4887) tying
-every certificate to the requesting account, and the DC will hold the PKINIT
-authentications I performed. I expect to be fully attributable in both logs — I plan
-the cleanup, not the concealment.
+The CA will hold request/issuance records (4886/4887) tying each certificate to its
+requester, and the DC the PKINIT authentications I performed. Fully attributable in both
+logs — I plan cleanup, not concealment.
