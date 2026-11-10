@@ -174,35 +174,51 @@ explicitly revoked or rotated.
 
 ---
 
-## 4. The wider surface (briefing)
+## 4. The wider surface — how to recognise exposure (a briefing, not findings)
 
-I exploited three families here. Others exist on any AD CS deployment, and the point of
-this section is **method, not catalogue** — the ESC numbers grow and renumber as tooling
-evolves, so recognise families by their primitive, not by a memorised index.
+The three paths in §1–§3 are this engagement's findings. This section is different in kind:
+it is a briefing on the *conditions* that make any AD CS deployment exposed, so Halstead's
+own team can triage the templates it adds later. It is deliberately **not** a list of named
+attacks to memorise — the numbering in the public tooling grows and shifts as the tooling
+does, while the conditions below do not. The durable capability is the triage, not the
+catalogue.
 
-Enumerate, for every template: **who may enrol**, **who supplies the subject/SAN**, the
-**EKU**, **manager approval**, and **whether the SID extension is stamped** — and for the
-CA: its **endpoints**, the **EDITF/attribute flags**, and the **officer ACLs** — then for
-the DC: **how it maps a presented certificate**. A path is open when enrolment is reachable,
-the certificate can authenticate, and nothing binds it to its true requester.
+A certificate becomes an escalation only when three things hold together: **a certificate
+that can authenticate is reachable by someone who should not have it, and nothing binds the
+certificate to its true requester.** Triage is checking, for every template and for the CA
+and the DC, which of those three a control is actually closing. Four recognition dimensions
+cover almost every case — read these rather than recall acronyms.
 
-Families to recognise (not exploited here):
+**Identity control — can the holder choose whom the certificate proves them to be?**
+Recognise it by: the enrollee supplies the subject or SAN; the requester can influence the
+UPN the certificate will carry; the issued certificate omits the SID security extension; or
+the account is mapped by a weak, implicit identifier rather than a strong explicit one. When
+the DC decides identity from a field the requester can influence, the template is exposed.
+This is the condition strong mapping exists to close, and the one that was left open here.
 
-- **Attacker-controlled SAN at the CA** — a CA flag that lets any requester specify an
-  arbitrary SAN on an otherwise-safe template. *Recognise:* the CA's attribute flags allow
-  subject-alt-name in the request. Confirmed **off** here.
-- **Over-permissive EKUs** — *Any Purpose* or no-EKU certificates that authenticate as the
-  subject, or **Enrollment-Agent** certificates that let you enrol *on behalf of* others.
-  *Recognise:* EKU = Any Purpose / Certificate-Request-Agent with low-privilege enrolment.
-- **PKI-object and CA-officer control** — write access over the CA object, the templates
-  container, `NTAuthCertificates`, or `ManageCA`/`ManageCertificates`. *Recognise:* ACLs on
-  those objects granting non-admins. Confirmed admin-only here.
-- **Mapping and policy weaknesses** — issuance policies that confer group membership, or
-  application-policy / cross-mapping quirks. *Recognise:* templates linked to issuance
-  policies, or mapping attributes set on accounts.
+**Enrollment rights — who can obtain an authentication-capable certificate at all?**
+Recognise it by: broad or low-privilege principals holding enrol rights on any template
+whose EKU permits logon — Client Authentication, Smart Card Logon, *Any Purpose*, or no EKU
+at all. A template that cannot authenticate is never a path regardless of who may enrol; one
+that can becomes a path the moment the wrong people can request it.
 
-The durable skill is the triage above. Any one of these becomes the next engagement's foothold
-the moment a template is cloned carelessly.
+**Template and authority control — who can change the rules, or issue outside them?**
+Recognise it by: write access (Full Control, Write-DACL, Write-Owner) over a template
+object; control of the CA object, its configuration, or the `NTAuthCertificates` store; or
+possession of the officer roles that approve and issue. A principal who can turn a safe
+template into an unsafe one, or issue at will, holds the surface whatever the templates look
+like today.
+
+**Relay exposure — will an enrollment endpoint act on authentication that was not freely
+given?** Recognise it by: an enrollment channel that accepts authentication without binding
+it to the channel — web enrollment over HTTP or without EPA, or RPC enrollment without
+request encryption — reachable by a privileged account that can be made to authenticate
+outward. The hardening that protects file shares does not protect these endpoints; they are
+checked separately.
+
+Applied together across every template and the CA and DC, these four dimensions tell
+Halstead whether a new template is a path **before** an attacker does. A template cloned
+carelessly next quarter will not announce which condition it meets; reading these will.
 
 ---
 
