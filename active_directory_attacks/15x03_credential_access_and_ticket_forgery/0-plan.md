@@ -2,16 +2,26 @@
 
 ## Locating the material before taking it
 
-I start by mapping where Kessler's key material actually lives, not by grabbing it. On the DC I will enumerate the directory, the KDC, DNS, and the one co-located authenticable service, and I will probe the **memory route first on purpose** — a credential dump that returns live sessions and machine/service secrets but **no `krbtgt`**. That empty result is the signal, not a failure: the domain master key never logs on, so it is never in LSASS. A route is "closed" when the technique that should surface a secret returns a well-formed answer that does not contain it (memory has no `krbtgt`), as distinct from "done badly," which looks like an auth error, a skew/`KRB_AP_ERR_SKEW`, a name-resolution miss, or an access denied — fixable, not conclusive. Only after the memory wall do I turn to the directory, reachable two ways: replication (DCSync) and the file on disk (`NTDS.dit` + SYSTEM-hive boot key, offline).
+I map where Kessler's key material lives before grabbing it, and probe the **memory route first on purpose** — a credential dump returns live sessions and machine/service secrets but **no `krbtgt`**. That empty result is the signal: the domain master key never logs on, so it is never in LSASS. A route is "closed" when the right technique returns a well-formed answer lacking the secret, as distinct from "done badly" — an auth error, `KRB_AP_ERR_SKEW`, a name-resolution miss, access denied — which is fixable, not conclusive. Only after the memory wall do I turn to the directory, reachable two ways: replication (DCSync) and the file on disk (`NTDS.dit` + SYSTEM boot key, offline).
 
 ## Choosing a capability per objective
 
-For each objective I pick by **blast radius and detectability**, not by "works everywhere." Replication/DCSync when I want one account quietly but can accept the 4662 replication trace. Offline `NTDS.dit` when I want everything without touching the directory service. Silver when I only need one service and want **no KDC contact at all**. Golden (AES, never RC4) when I need domain-wide reach and will accept being the loud, powerful case. Diamond when I want a forged ticket that rides a real TGT and looks legitimate. "The one that works everywhere" is the golden RC4 answer — it forfeits the professional half of the grade.
+I pick by **blast radius and detectability**, not "works everywhere." DCSync for one account quietly, accepting the 4662 trace. Offline `NTDS.dit` for everything without touching the directory service. Silver for one service with **no KDC contact**. Golden (AES, never RC4) for domain-wide reach, accepting the loud case. Diamond when I want a forgery that rides a real TGT. "The one that works everywhere" is golden RC4 — it forfeits the professional half of the grade.
 
-## Recording what I build
+## Recording what I build — a revocation-ready inventory
 
-Every forged artifact gets logged so Kessler can invalidate it: ticket class, principal/SPN, key material and algorithm (AES), timestamps/lifetimes, the account and keys it depends on, and where the output file lives. Persistence is only real if I can later point to exactly what must be rotated.
+Each artifact gets one record, six fields, so Kessler can invalidate it without hunting: **(1) identifier** — type + name (principal/SPN, account, key, file); **(2) lifecycle** — created-at, lifetime/expiry, algorithm (AES); **(3) scope/target** — what it authenticates to and its blast radius; **(4) storage** — exact path of the `.kirbi`/`.ccache`/dump; **(5) use** — where I authenticated with it; **(6) invalidate action** — the explicit per-item undo:
+
+- **Extracted secrets (NTDS dump, service/machine keys)** → rotate those accounts; delete the dump.
+- **krbtgt key** → **double** krbtgt reset (two rotations, >10h apart).
+- **DPAPI backup key + masterkeys** → re-seed the domain DPAPI backup key; force re-protection; delete recovered plaintext.
+- **Silver ticket** → reset the target service account's password; delete the file.
+- **Golden ticket** → double krbtgt reset (as the key).
+- **Diamond ticket** → krbtgt reset invalidates it; delete the output.
+- **Foothold use** → reset `g.hale` and any touched account; host reset on the DC.
+
+Persistence is only real if each record names exactly what to rotate, reset, or delete.
 
 ## What the DC will have recorded
 
-I expect: 4662 for DCSync; **nothing** for the silver forge and its use (no 4768/4769); 4624/4672 on ticket use; and the offline file-read leaving no directory-service event. Predicting the silence is the test that I understand the technique, not just the command.
+I expect: 4662 for DCSync; **nothing** for the silver forge or its use (no 4768/4769); 4624/4672 on ticket use; the offline file-read leaving no directory-service event. Predicting the silence tests whether I understand the technique, not just the command.
