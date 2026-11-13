@@ -20,17 +20,18 @@ I default to the top row that proves the objective; "works everywhere" (golden R
 
 ## Recording what I build — a revocation-ready inventory
 
-Every artifact gets one complete record — all six fields filled at creation time — so Kessler can invalidate each item without hunting:
+Every artefact — credential, key, ticket, or derived material — gets one complete record, all nine fields filled at creation time, so Kessler can invalidate each item without hunting (values below are the template filled per real artefact at forge/extract time):
 
-| Artifact | Identifier | Lifecycle (created · expiry · source/version) | Scope/target | Storage | Use | Invalidate action |
-|---|---|---|---|---|---|---|
-| Extracted secrets | account name + RID; NT/AES hash | dumped-at · n/a · from `NTDS.dit`+SYSTEM | those accounts | `evidence/ntds/*.dump` | read offline | rotate each account; delete dump |
-| krbtgt key | `krbtgt` + kvno + AES256 hash | extracted-at · n/a · DCSync/offline | domain-wide | `evidence/krbtgt.txt` | seeds golden/diamond | **double** krbtgt reset (>10h apart) |
-| DPAPI backup key + masterkeys | backup-key GUID; masterkey GUIDs | recovered-at · n/a · domain backup key | all DPAPI secrets | `evidence/dpapi/` | decrypt FLAG_DPAPI | re-seed backup key; force re-protect; delete plaintext |
-| Silver ticket | SPN + service acct; AES key used | forged-at · ticket lifetime · service AES hash | 1 service/host | `evidence/silver.ccache` | access service, no KDC | reset service account pw; delete file |
-| Golden ticket | user + domain SID; krbtgt kvno | forged-at · lifetime · krbtgt AES256 | domain-wide | `evidence/golden.ccache` | domain-wide auth | double krbtgt reset; delete file |
-| Diamond ticket | base user + real TGT; krbtgt kvno | forged-at · inherited lifetime · krbtgt AES256 | domain-wide | `evidence/diamond.kirbi` | domain auth, legit-looking | krbtgt reset; delete file |
-| Foothold use | `g.hale` + any touched account | session start/end · n/a | per touched account | `evidence/notes.md` | DCSync, admin on DC | reset `g.hale` + touched accts; DC host reset |
+| Artefact (type) | Identifier | Created | Expiry | Source / key version | Scope/target | Storage | Use | Invalidate action |
+|---|---|---|---|---|---|---|---|---|
+| Extracted secrets (dump) | sAMAccountName + RID; NT/AES256 hash | dump time | none — valid until rotated | from `NTDS.dit` + SYSTEM boot key | those accounts | `evidence/ntds/secrets.dump` | read offline | rotate each account; delete dump |
+| krbtgt key | `krbtgt` acct + kvno N; AES256 hash | extract time | none — until reset | DCSync / offline NTDS | domain-wide | `evidence/krbtgt.txt` | seeds golden/diamond | **double** krbtgt reset (2 rotations >10h apart) |
+| DPAPI domain backup key | backup-key GUID + version | recover time | none — until re-seeded | `backupkeys` via domain backup key | all domain DPAPI masterkeys | `evidence/dpapi/backupkey.pvk` | derive masterkeys | re-seed domain backup key; delete plaintext |
+| DPAPI masterkey(s) | masterkey GUID per user | decrypt time | none — until re-protected | backup key above | that user's secrets | `evidence/dpapi/masterkeys/` | decrypt FLAG_DPAPI blob | force masterkey re-protection; delete plaintext |
+| Silver ticket | target SPN + service acct; AES key | forge time | forge + ticket lifetime (~10h) | service AES256 hash | 1 service / 1 host | `evidence/silver.ccache` | access service, no KDC request | reset service account pw; delete file |
+| Golden ticket | impersonated user + domain SID; krbtgt kvno | forge time | forge + lifetime | krbtgt AES256 | domain-wide | `evidence/golden.ccache` | domain-wide auth | double krbtgt reset; delete file |
+| Diamond ticket | base user + real TGT id; krbtgt kvno | forge time | inherited from real TGT | krbtgt AES256 | domain-wide | `evidence/diamond.kirbi` | domain auth, legitimate-looking | krbtgt reset; delete file |
+| Foothold TGT | `g.hale` UPN; TGT id | getTGT time | +10h (renewable) | g.hale AES/NT key | g.hale's rights | `evidence/g.hale.ccache` | DCSync, admin on DC | reset `g.hale` password; delete ccache |
 
 Persistence is only real if each record names exactly what to rotate, reset, or delete.
 
