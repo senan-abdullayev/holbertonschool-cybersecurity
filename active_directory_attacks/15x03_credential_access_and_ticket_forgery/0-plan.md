@@ -1,8 +1,15 @@
 # 0-plan.md — The Plan, Before You Hold Everything
 
-## Locating the material before taking it
+## Where Kessler's credential material lives (established before any access attempt)
 
-I map where key material lives before grabbing it, probing the **memory route first** — a dump returns machine/service secrets but **no `krbtgt`**: the domain master key never logs on, so it is never in LSASS. That empty result is the signal, not failure. A route is "closed" when the right technique returns a well-formed answer lacking the secret — not "done badly" (auth error, skew, name miss, access denied), which is fixable. Only then the directory: DCSync, or `NTDS.dit` + SYSTEM boot key offline.
+Before taking anything I build a location map, separated three ways — **account context**, **replication boundary**, **protection condition** — so I know where each secret resides and under what protection before touching it:
+
+- **Account contexts are distinct principals, not "I am admin."** User accounts (incl. `g.hale`), the co-located **service account** (→ silver), the **machine account** (DC$), and the **`krbtgt`** domain key each have their own store. Holding Domain-Admin rights is not the same as holding `krbtgt`.
+- **In memory (LSASS):** only principals with a **live logon session** — machine/service material and currently-logged-on users. `krbtgt` has **no logon session** (the KDC uses it as stored key material; it never authenticates), so it is *structurally* absent here, not merely "not found."
+- **At rest in the directory:** every secret, `krbtgt` included, lives in **`NTDS.dit`**, encrypted under the SYSTEM-hive **boot key**. Two routes with different boundaries: **replication** (DRS/DCSync — asks the DC, bounded by replication rights, leaves a 4662) and **the file** (`NTDS.dit` + SYSTEM hive parsed offline — bounded by disk access, no directory-service event).
+- **DPAPI:** per-user masterkeys protect user secrets and are recoverable through the **domain DPAPI backup key** on the DC.
+
+**Proving a route is closed — by corroboration, not one non-result.** The memory route to the domain key is closed *by design*; I establish that with three agreeing observations, not a single empty dump: (1) no enumerable `krbtgt` logon session on the host; (2) `krbtgt` absent from LSASS secrets across a full dump; (3) consistent with the architectural fact that the KDC never logs `krbtgt` on. A route is only **"done badly"** — retried, never declared closed — when the failure is operational (auth error, clock skew, name-resolution miss, access denied), which is fixable and says nothing about where the secret lives. Only once the memory route is *established* closed do I move to the directory.
 
 ## Choosing a capability per objective
 
