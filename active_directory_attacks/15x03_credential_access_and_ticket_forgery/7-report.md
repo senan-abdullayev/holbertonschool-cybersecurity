@@ -57,29 +57,42 @@ Kessler reset the `krbtgt` password once — exactly as you would on the morning
 
 ---
 
-## 2. What was actually taken (in terms a board understands)
+## 2. What Kessler has lost — the secrets, and the standing authority each one carries
 
-Not a list of techniques — a statement of what Kessler has lost and what a holder can do tomorrow morning, unilaterally:
+This section is deliberately **not** a list of what we did. It is a list of **what Kessler no longer controls**, and for each secret, the authority a holder keeps *after we are gone* — what they can **create or read later, offline, without asking anyone and without any fresh access or permission.**
 
-1. **The domain master key (`krbtgt`).** This is the key your domain uses to sign *every* authentication token it issues. Whoever holds it can **mint a valid token for anyone — any user, any administrator, any service — for any resource, at any time**, without that account's password and without contacting anything. There is no account to "watch" and no password to change that revokes it.
-2. **Every account's credential in the directory.** Via the offline copy, we hold the password material for **every user, computer and service account in `kessler.local`**, including the domain Administrator and the DC itself. Any of them can be impersonated directly.
-3. **One service's own key** (the co-located file service / machine account), which lets us issue tickets for that service that the domain controller never sees.
-4. **The domain DPAPI backup key.** This is the organisation's master recovery key for **all data your staff protected with Windows' built-in protection** — saved credentials, browser-stored secrets, private keys. We decrypted a specific user's protected secret with it to prove the capability. The holder can decrypt **any** user's protected data, estate-wide, without passwords.
+**1. The domain's master signing key (`krbtgt`).**
+This single key is what the domain uses to sign every authentication token it issues — it is the thing that makes a token "real."
+*Standing authority of whoever holds it:* they can **manufacture a valid identity for anyone — any employee, any administrator, any service, any computer, even identities that do not exist yet — for any system, at any time.** They do this **offline, without contacting a domain controller, and without any account's password.** It is not a login and there is no session to expire. It keeps working **after you reset user passwords** (they simply mint a new token) and **after you reset `krbtgt` once** (see §5). Nothing short of rotating this one key *twice* removes the capability.
 
-**What a holder does tomorrow, asking no one:** becomes the domain Administrator at will; reads any employee's stored secrets and saved credentials; impersonates the aerospace/defence service accounts that run your systems; and persists through the obvious clean-up. They do not need to "break in" again — they **are** the identity authority.
+**2. Every account's keys in the directory (the whole `NTDS.dit`).**
+We hold the secret key material for **every user, computer and service account in `kessler.local`** — the domain Administrator and the domain controller's own account included.
+*Standing authority:* they can authenticate **as any named account directly**, with no password-guessing and no interaction, until **each individual account's password is changed** — tens or hundreds of separate resets, not one.
+
+**3. A service's own key (the co-located service account / the DC's machine account).**
+*Standing authority:* they can issue access tokens **for that service that the domain controller never sees and never approves** — invisible impersonation of that service's users — until **that specific account's key is rotated.**
+
+**4. The domain DPAPI backup key.**
+This is the organisation's master recovery key for **everything your staff protected with Windows' built-in data protection** — saved passwords, browser secrets, stored private keys and certificates.
+*Standing authority:* they can **decrypt any employee's protected data, across the entire estate, past and future, without that employee's password and without their knowledge.** This is not impersonation — it is the **data itself**. It stays usable until the backup key is rotated *and* every protected secret is re-encrypted; anything already decrypted is simply gone.
+
+**What this means on an ordinary Tuesday, with us no longer in the building:** a holder becomes the domain Administrator whenever they choose, reads any employee's stored secrets, and impersonates the service accounts that run your aerospace/defence systems — **generating their own permission each time, indefinitely, until the specific key behind each capability is retired.** They never "break in" again, because they do not need an account: they are the authority that issues accounts.
 
 ---
 
-## 3. Credential against capability — the distinction the whole budget turns on
+## 3. Credential against capability — why this is not a compromised administrator, and why the budget is different
 
-If you currently believe this is the same size of problem as a compromised administrator account, it is not, and the difference is the entire reason the remediation is expensive.
+If the mental model for this incident is "an admin account was stolen — reset it," that model is wrong by orders of magnitude, and the whole remediation budget depends on the board seeing why. This is not a worse version of the *same* problem; it is a **different kind** of problem. The difference shows on three axes:
 
-- **A compromised credential** is the ability to **be one person**. You revoke it by changing that person's password. The scope is one account; the fix is one reset; the cost is small and the problem is over.
-- **A compromised capability** — which is what key material is — is the ability to **manufacture any person you like, repeatedly, for as long as the underlying key is trusted.** There is no single account to reset, because the attacker is not using an account; they are using the machine that *vouches for* accounts.
+| | **A stolen administrator account** | **The domain key material we now hold** |
+|---|---|---|
+| **Breadth** | Lets the attacker be **one identity** — that account, with exactly the rights it has. | Lets the attacker **be, or create, *any* identity** in the domain, **and read every user's protected data.** Not one account — all of them, including accounts that do not exist yet. |
+| **Permission** | They **borrow** that account's existing access. If the account lacks a right, so do they; grant/deny still governs them. | They **do not use anyone's access — they mint their own.** Permission stops being a gate: they issue the tokens that *define* permission, offline. They never need fresh access again. |
+| **Persistence** | Ends the moment the **session ends, the password is reset, or the account is disabled.** Revocation is **one action on one account.** | **Survives password resets** (forge a new token), **survives the account we first used** (we no longer need `g.hale`), and **survives the single `krbtgt` reset everyone reaches for first.** Only a **double key rotation plus a domain-wide credential reset** ends it. |
 
-Step 2 (directory keys) gave us the ability to **be your people**. Step 3 (DPAPI backup key) gave us **what your people were keeping**. Those are different losses: one is impersonation, the other is their data at rest. Neither is fixed by a password reset, because neither depends on a password.
+Put plainly: a stolen admin account is a **borrowed key to one door that you take back by changing the lock.** Domain key material is **the key-cutting machine and the master blank** — the holder cuts a key to any door at any time, and changing one lock does nothing. The two losses we inflicted map onto this exactly: the directory keys let us **be your people**; the DPAPI backup key gives us **what your people were keeping.** Neither depends on a password, so **no password reset recovers either.**
 
-The budget consequence: remediating a compromised administrator is an afternoon. Remediating compromised **key material** is a staged rotation of the domain's trust anchors plus a credential reset of everything those keys could forge or decrypt — and it cannot be safely rushed (see §5).
+The budget consequence the board must internalise: recovering from a stolen administrator is **one reset, one afternoon.** Recovering from this is a **staged rotation of the domain's trust anchors, a reset of every credential those keys can forge, re-protection of all DPAPI-protected data, and a rebuild of the compromised controller** — and, as §5 shows, it **cannot be safely compressed into one maintenance window** without doing more damage than we did.
 
 ---
 
