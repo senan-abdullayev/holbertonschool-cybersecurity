@@ -20,15 +20,17 @@ I default to the top row that proves the objective; "works everywhere" (golden R
 
 ## Recording what I build — a revocation-ready inventory
 
-Each artifact gets one record, six fields, so Kessler can invalidate it without hunting: **(1) identifier** (type + name); **(2) lifecycle** (created-at, lifetime/expiry, algorithm — AES); **(3) scope/target** (what it authenticates to, blast radius); **(4) storage** (`.kirbi`/`.ccache`/dump path); **(5) use** (where I authenticated); **(6) invalidate action** (explicit per-item undo):
+Every artifact gets one complete record — all six fields filled at creation time — so Kessler can invalidate each item without hunting:
 
-- **Extracted secrets (NTDS dump, service/machine keys)** → rotate those accounts; delete the dump.
-- **krbtgt key** → **double** krbtgt reset (>10h apart).
-- **DPAPI backup key + masterkeys** → re-seed the backup key; force re-protection; delete plaintext.
-- **Silver ticket** → reset the service account's password; delete the file.
-- **Golden ticket** → double krbtgt reset (as the key).
-- **Diamond ticket** → krbtgt reset invalidates it; delete the output.
-- **Foothold use** → reset `g.hale` and any touched account; host reset on the DC.
+| Artifact | Identifier | Lifecycle (created · expiry · source/version) | Scope/target | Storage | Use | Invalidate action |
+|---|---|---|---|---|---|---|
+| Extracted secrets | account name + RID; NT/AES hash | dumped-at · n/a · from `NTDS.dit`+SYSTEM | those accounts | `evidence/ntds/*.dump` | read offline | rotate each account; delete dump |
+| krbtgt key | `krbtgt` + kvno + AES256 hash | extracted-at · n/a · DCSync/offline | domain-wide | `evidence/krbtgt.txt` | seeds golden/diamond | **double** krbtgt reset (>10h apart) |
+| DPAPI backup key + masterkeys | backup-key GUID; masterkey GUIDs | recovered-at · n/a · domain backup key | all DPAPI secrets | `evidence/dpapi/` | decrypt FLAG_DPAPI | re-seed backup key; force re-protect; delete plaintext |
+| Silver ticket | SPN + service acct; AES key used | forged-at · ticket lifetime · service AES hash | 1 service/host | `evidence/silver.ccache` | access service, no KDC | reset service account pw; delete file |
+| Golden ticket | user + domain SID; krbtgt kvno | forged-at · lifetime · krbtgt AES256 | domain-wide | `evidence/golden.ccache` | domain-wide auth | double krbtgt reset; delete file |
+| Diamond ticket | base user + real TGT; krbtgt kvno | forged-at · inherited lifetime · krbtgt AES256 | domain-wide | `evidence/diamond.kirbi` | domain auth, legit-looking | krbtgt reset; delete file |
+| Foothold use | `g.hale` + any touched account | session start/end · n/a | per touched account | `evidence/notes.md` | DCSync, admin on DC | reset `g.hale` + touched accts; DC host reset |
 
 Persistence is only real if each record names exactly what to rotate, reset, or delete.
 
