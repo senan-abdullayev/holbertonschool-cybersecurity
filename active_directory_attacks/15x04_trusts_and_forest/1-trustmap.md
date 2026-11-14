@@ -75,23 +75,30 @@ effect is proven in the FLAG_FILTER task and is **not** claimed as a crossing he
 
 ---
 
-## Part C — Not a structural property: reachability
+## Part C — Not a structural property: reachable *direction* (access not assumed)
 
-Reachability is a *consequence* of Part A direction **plus** Part B filtering **plus** existing
-ACLs. Bidirectional direction is authentication capability, never authorisation.
+"Reachable" here means **only the direction in which the trust permits an authentication request
+to traverse** — derived from Part A direction and bounded by Part B filtering. It makes **no**
+claim that any principal can reach any specific resource: resource access is decided by ACLs the
+trust map does not enumerate, so none is asserted here.
 
-- **T1:** with the foothold, `r.bello` authenticates to ALDER-ROOT-DC, reads its directory, and
-  reads the `proof$` share (verified). `C:\RootOnly` stays gated until the Enterprise Admins SID
-  is injected via `ExtraSids` (which T1's lack of filtering permits).
-- **T2:** bidirectional direction does **not** make Trentham reachable from the foothold —
-  verified, an LDAP bind as `r.bello@corp.aldermont.local` against TRENTHAM-DC is rejected
-  (`AcceptSecurityContext error, data 52e`), i.e. no standing rights. The one authorised path is
-  an Aldermont universal group holding rights on a Trentham resource, whose SID is native to the
-  trusted forest and survives SID filtering.
+- **T1 — `corp` ⇄ `aldermont`:** the within-forest trust permits authentication to traverse in
+  **both directions** between the two domains. No SID filtering applies, so authority minted
+  inside the forest is not stripped as it traverses. Whether a given identity can read a given
+  object remains an ACL question and is **not** claimed from the trust.
+- **T2 — `aldermont` ⇄ `trentham`:** the forest trust permits authentication to traverse in
+  **both directions** between the two forests. Its SID filtering strips foreign / RID<1000 SIDs,
+  so **injected authority does not traverse** — the trust by itself confers **no** access into
+  `trentham.local`. Any access requires an explicit grant whose SID is native to the trusted
+  forest. Consistent with "no access from the trust alone," an unprivileged bind by the foothold
+  to TRENTHAM-DC is **refused** (`AcceptSecurityContext error, data 52e`).
+
+Direction is a property of the trust; it is never read as capability to reach a resource.
 
 ### Boundary summary
-The **domain** is not the security boundary — inside `aldermont.local` the child DA reaches the
-root unfiltered (T1). The **forest** is the boundary that holds — SID filtering on the T2 forest
-trust stops the same technique and forces the one narrow, legitimate door.
+The **domain** is not the security boundary — within `aldermont.local` a within-forest trust
+carries authority between child and root with no filtering in the path (T1). The **forest** is
+the boundary that holds — SID filtering on the T2 forest trust strips injected authority, so no
+resource in `trentham.local` is reachable on the strength of the trust itself.
 
-> FLAG_TRUSTMAP (read from `\\ALDER-ROOT-DC\proof$\trustmap.txt` with the foothold): `ALD{f05f5d1ffdcf5a577ce31756e43ff5ed}`
+> FLAG_TRUSTMAP — located at `\\ALDER-ROOT-DC\proof$\trustmap.txt`: `ALD{f05f5d1ffdcf5a577ce31756e43ff5ed}`
