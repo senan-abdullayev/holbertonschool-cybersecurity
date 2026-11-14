@@ -130,8 +130,8 @@ Every entry below maps back to this sweep.
 
 - **AD CS web enrollment (HTTP 80 / HTTPS 443, `certsrv`)** — not open on either
   host. No ESC8 surface here (and certificate abuse is out of scope for 15x01).
-- **MSSQL / 1433** — not open on either host; no SQL relay sink.
-- **WinRM-HTTPS / 5986** — not open; only plaintext 5985 exists.
+- **MSSQL** / 1433 — not open on either host; no SQL relay sink.
+- **WinRM-HTTPS** / 5986 — not open; only plaintext 5985 exists.
 - **LDAP / LDAPS / GC on SRV-LEGACY** — absent; SRV-LEGACY is not a DC, so it
   exposes no directory relay sink.
 
