@@ -9,24 +9,51 @@
 
 ## 1. The estate — what you actually have
 
-Aldermont is not one network. It is **three directories that agreed to trust each other**, and those agreements are the real map of your attack surface:
+Aldermont is not one network. It is **three separate directories that agreed to trust each other.** Those agreements — not the network diagram — are the real map of who can reach what. Here is the whole estate on one picture:
 
-- **`aldermont.local` — the forest root.** The top of the house. Whoever controls it controls everything beneath it.
-- **`corp.aldermont.local` — the regional child.** Run by a separate team, with its own administrators and its own change control. On every diagram there is a line between it and the root.
-- **`trentham.local` — a company you acquired.** A *separate* directory ("forest") of its own, bolted onto Aldermont three years ago by a trust so the two could share resources.
+```
+        ALDERMONT  (the parent company directory)
+        aldermont.local  — the top of the house
+              |
+              |  Trust A: parent & child, SAME company directory
+              |           (no gate between them)
+              |
+        CORP   (a regional branch, run by a different team)
+        corp.aldermont.local   <-- our starting account lives here
 
-Two trust relationships hold this together:
+        ALDERMONT  <===========>  TRENTHAM   (a company Aldermont bought)
+                   Trust B: two                trentham.local
+                   DIFFERENT company
+                   directories, linked
+                   (this link has a gate)
+```
 
-| Trust | Between | What it is |
-|-------|---------|-----------|
-| **A** | `corp` ⇄ `aldermont` | the normal parent/child link **inside one forest** |
-| **B** | `aldermont` ⇄ `trentham` | a **forest-to-forest** link between two separate companies |
+The three directories, in plain terms:
 
-**What is reachable from where (plain language).** The regional team's administrator can, by design and with no exploit, become administrator of the entire forest root — the line on your diagram between "corp" and "the root" is a drawing, not a wall. The forest link to Trentham behaves differently: it **blocks** an attacker who tries to fake a Trentham identity, but it still **honours a real permission** that was granted to an Aldermont group during the acquisition and never removed. So Trentham is protected against forgery but not against a forgotten grant.
+- **`aldermont.local` — the head office directory.** The top of the house. Whoever controls it controls everything beneath it.
+- **`corp.aldermont.local` — a regional branch.** The same company as head office, just run by a different team with its own admins. This is where our starting account sits.
+- **`trentham.local` — a company Aldermont acquired.** A genuinely *separate* company's directory, connected to Aldermont three years ago so the two could share resources.
+
+Two links hold it together:
+
+| Link | Between | In plain terms |
+|------|---------|----------------|
+| **Trust A** | `corp` ⇄ `aldermont` | branch ↔ head office — **the same company's directory**, with no gate between them |
+| **Trust B** | `aldermont` ⇄ `trentham` | Aldermont ↔ an **acquired, separate company**, with a gate on the link |
+
+**Who can reach what (this is the part that matters):**
+
+| Starting point | Can they reach… | Result | Why |
+|----------------|-----------------|--------|-----|
+| the **branch** admin (our account) | **head office** (the root) | **Yes — total control** | there is **no gate** between a branch and head office; an identity made in the branch is accepted at head office unchanged |
+| the **branch/head-office** side | **Trentham**, by faking a Trentham identity | **No** | the gate on Trust B **throws out faked identities** before Trentham ever sees them |
+| the **branch/head-office** side | **Trentham**, using a *real* leftover permission | **Yes** | one Aldermont group was given real access inside Trentham during the acquisition and never un-granted; the gate lets a *genuine* permission through |
+
+In one line: **head office is wide open from the branch, and Trentham is protected against forgery but not against a forgotten permission.**
 
 The one sentence to circulate internally:
 
-> **The regional child domain was compromised, and the forest root fell as a direct consequence — with no vulnerability anywhere. Running the two domains as separate teams with separate change control did not make them separate security zones.**
+> **The regional branch was compromised, and head office fell as a direct consequence — with no software flaw anywhere. Running the branch and head office as separate teams with separate change control did not make them separate security zones.**
 
 ---
 
