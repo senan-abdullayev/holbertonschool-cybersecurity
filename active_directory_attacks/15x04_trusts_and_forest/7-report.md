@@ -59,6 +59,18 @@ The one sentence to circulate internally:
 
 ## 2. What crossed — the chain, boundary by boundary
 
+Every boundary we reached is below, and for each we record whether it **let us through** or **stopped us** — a chain that only listed wins would hide which of your boundaries are actually working.
+
+**Boundary outcomes at a glance (both the successes and the block):**
+
+| Boundary | What we tried | Outcome | Why |
+|----------|---------------|---------|-----|
+| **Trust A** — branch → head office | carry an injected head-office admin identity across | ✅ **CROSSED** | no gate inside one company's directory — the injected identity was accepted unchanged |
+| **Trust B** — head office → Trentham (by forgery) | carry an injected Trentham admin identity across | ⛔ **BLOCKED** | the gate stripped the faked identity before Trentham saw it — *this boundary is doing its job* |
+| **Trust B** — head office → Trentham (the real door) | use a genuine leftover group permission | ✅ **CROSSED** | the gate passes a *real* permission; the leftover grant let us in |
+
+The blocked row is the most important line in this report: it is the one boundary of yours that held, and we are **not** claiming we crossed it. The step-by-step below shows the decision each boundary made.
+
 Each step below ends at a *boundary*, and the interesting part is the **decision** the boundary made.
 
 1. **Foothold.** We began as `r.bello`, administrator of the regional child `corp.aldermont.local`. *(Provided; not attacked.)*
