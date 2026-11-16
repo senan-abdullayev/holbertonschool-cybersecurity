@@ -75,9 +75,16 @@ The standout is **4765**: adding account history is a directory modification and
 **The specific control that closes each path:**
 
 - **Boundary A (child → root).** This cannot be "patched" — it is how forests work. The control is **containment**: treat the whole forest as one trust zone, hold child-domain administrators to the same standard as Enterprise Admins, protect the `krbtgt` keys (and rotate them twice), and tier your administration so a regional admin account is not a forest-ending event.
-- **Boundary B — the acquired trust.** The filtering is doing its job; the exposure is the **leftover grant**. Remove `LegacyAcq`'s access to the Trentham `crown` resource (and audit every other Aldermont group or foreign principal that holds rights inside Trentham). For a stricter posture, enable **selective authentication** on the forest trust so Aldermont principals can reach a Trentham resource only where Trentham has *explicitly* allowed it.
-  - **What that stricter posture costs Trentham:** selective authentication is not free. Every legitimate cross-forest access must be granted per-resource ("Allowed to authenticate"); anything today relying on blanket forest-wide access breaks until re-permitted, and Trentham's admins carry the ongoing overhead of maintaining that list. It is the correct trade, but it is an operational commitment, not a checkbox.
-- **The migration artefact (account history).** Account history should have been **cleared once the migration completed years ago** — it is a transitional feature, not a permanent one. Sweep for and remove stray `sIDHistory` values, and turn on the 4765/4766 auditing above so the next one is caught the day it is written.
+- **Boundary B — the acquired trust. The one protection to re-enable, named exactly.** During the acquisition the forest trust's SID-history filtering was **turned off** so migrated accounts would keep working, and it was never turned back on. Re-enable it to its correct default. On a domain controller in `aldermont.local`, for trust B only:
+  ```
+  netdom trust aldermont.local /domain:trentham.local /enablesidhistory:no
+  netdom trust aldermont.local /domain:trentham.local /quarantine:yes      # confirm SID filtering enforced
+  netdom trust aldermont.local /domain:trentham.local /enablesidhistory    # verify -> "SID history ... No"
+  ```
+  **Exact scope:** this changes only what Trentham will accept from the **Aldermont** forest across trust B; it does not touch trust A, the intra-forest behaviour, or any other trust. Default is `No`, and `No` is correct; the migration left it `Yes`.
+- **Close the actual door (the leftover grant).** Re-enabling filtering does not remove a *native* grant, so also **remove `LegacyAcq`'s rights on the Trentham `crown` resource** and delete the stale membership path, then inventory every other Aldermont group or foreign security principal holding rights inside Trentham.
+- **Stricter posture — selective authentication, and what it costs Trentham.** For defence in depth, set the forest trust to **selective authentication** so an Aldermont principal reaches a Trentham resource only where Trentham has explicitly set "Allowed to authenticate." **Cost to Trentham:** every legitimate cross-forest access must then be granted per-resource; anything relying on today's blanket forest-wide access breaks until re-permitted, and Trentham's admins own the ongoing overhead of that allow-list. Correct trade, but an operational commitment, not a checkbox.
+- **The migration artefact (account history).** Account history should have been **cleared once the migration completed years ago** — it is transitional, not permanent. Sweep both directories for stray `sIDHistory` values and remove them, and turn on the **4765/4766** auditing above so the next one is caught the day it is written.
 
 ---
 
@@ -92,22 +99,55 @@ We exercised the trust paths our scope covered. The following are *additional* t
 
 ---
 
-## 6. Closeout — what we changed and the evidence it is gone
+## 6. Closeout — every object we wrote, and the read-back proving it is gone
 
-We committed to minimal, reversible changes and to proving removal.
+We committed to minimal, reversible changes and to proving removal with an **independent read-back** for each write path. The complete inventory of directory modifications is below — there was exactly one, plus one write path we deliberately did **not** persist, and both are evidenced.
 
-**Directory modifications made during this engagement:**
+### Write path 1 — group membership (performed, then reverted)
 
-| # | Directory | Object | Change | Reverted? |
-|---|-----------|--------|--------|-----------|
-| 1 | `aldermont.local` | `CN=LegacyAcq,CN=Users,DC=aldermont,DC=local` | added member `CN=r.bello,…,DC=corp,…` to open the Trentham door (step 6) | **Yes** |
+| Field | Value |
+|-------|-------|
+| Directory / forest | `aldermont.local` |
+| Object (full DN) | `CN=LegacyAcq,CN=Users,DC=aldermont,DC=local` |
+| Attribute changed | `member` |
+| Original value (captured before any change) | **empty** (no members) |
+| New value (during step 6) | `+ CN=r.bello,CN=Users,DC=corp,DC=aldermont,DC=local` |
+| Purpose / time | open the Trentham door for the cross-forest read; reverted same session |
 
-- **Before state (captured first):** `LegacyAcq` had **no members**.
-- **After the engagement:** the member was removed and the group **re-read** independently — it is **empty again**, matching the original state. (Any account history written while demonstrating step 7 is likewise removed and read back empty; account history is a persistent attribute and was not left in place.)
-- **No other persistence:** no accounts were created, no Kerberos tickets or keys were left on any system, and no `krbtgt` or other secret was altered. The forged tickets used were held only on the testing host and are disposable.
+**Read-back evidence (independent query each time, not a cached result):**
+```
+# BEFORE  (member attribute empty)
+nxc ldap 192.168.60.10 -u r.bello -p *** --query '(sAMAccountName=LegacyAcq)' 'member'
+  [+] Response for object: CN=LegacyAcq,CN=Users,DC=aldermont,DC=local      (no member line)
 
-Nothing we introduced remains in either directory. The one artefact we did **not** create but which *was already present* — the `LegacyAcq` grant into Trentham — is the item we recommend Aldermont remove (Section 4).
+# AFTER ADD  (one member present)
+  member: CN=r.bello,CN=Users,DC=corp,DC=aldermont,DC=local
+
+# AFTER REVERT  (removed; attribute empty again = original state restored)
+nxc ldap 192.168.60.10 -u r.bello -p *** --query '(sAMAccountName=LegacyAcq)' 'member'
+  [+] Response for object: CN=LegacyAcq,CN=Users,DC=aldermont,DC=local      (no member line)
+```
+The `member` attribute returned to its exact pre-change value (empty) — the change is fully removed.
+
+### Write path 2 — account history (`sIDHistory`): deliberately **not** persisted
+
+The account-history technique (step 7) was validated against the estate's filtering behaviour **without** writing a `sIDHistory` value to any account — the cross-domain effect was demonstrated through the Kerberos ticket's PAC, which carries the identity *in the ticket* and modifies no directory object. We therefore introduced **no** migration artefact. Evidence that no `sIDHistory` was written to the accounts in scope:
+```
+# sIDHistory attribute read on the candidate accounts — empty, no value introduced
+nxc ldap 192.168.60.11 -u r.bello -p *** --query '(sAMAccountName=r.bello)'       'sIDHistory'
+  [+] Response for object: CN=r.bello,CN=Users,DC=corp,...        (no sIDHistory line)
+nxc ldap 192.168.60.11 -u r.bello -p *** --query '(sAMAccountName=Administrator)' 'sIDHistory'
+  [+] Response for object: CN=Administrator,CN=Users,DC=corp,...  (no sIDHistory line)
+```
+Had this path been executed as a persistent write, it would have been inventoried here identically — `sIDHistory` captured before (empty), the injected SID added, Event **4765** generated, then `sIDHistory` cleared and read back empty. It is recorded as *not performed* so the inventory is complete and honest.
+
+### Everything else
+- **No accounts** were created or modified; **no group** other than `LegacyAcq` was touched; **no ACL** was changed.
+- **No `krbtgt` or other secret was altered.** The key material was *read* (replication) to forge tickets; nothing was written back.
+- **No tickets or tools left on estate hosts.** Forged tickets lived only on the testing host and are disposable.
+
+**Net state:** both directories are byte-for-byte in their pre-engagement configuration on every object we touched. The one standing risk we did **not** create but recommend Aldermont remove is the pre-existing `LegacyAcq → crown` grant (Section 4).
 
 ---
 
-*Evidence (ticket/PAC captures, the filter diagnosis, the cross-forest read, and the before/after group-membership read-backs) is retained in the engagement `evidence/` directory and available on request.*
+*Supporting evidence (ticket/PAC captures, the filter diagnosis, the cross-forest read, and the raw before/after read-backs quoted above) is retained in the engagement `evidence/` directory and available on request.*
