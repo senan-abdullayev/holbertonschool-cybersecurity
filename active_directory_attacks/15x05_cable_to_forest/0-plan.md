@@ -1,35 +1,41 @@
 # 0 — Engagement Plan
 
-**Scope:** `thornwick.local`, `corp.thornwick.local`, `ravensworth.local`. **Start:** one jack, no credential, no host, no map. **Objective:** forest-root dominance of Thornwick, then the document set in the acquired Ravensworth forest.
+**Scope:** `thornwick.local`, `corp.thornwick.local`, `ravensworth.local`. **Start:** one jack, no credential, no host, no map. **Objective:** forest-root dominance of Thornwick, then the Ravensworth document set.
 
 ## Primary axis
 
-With no credential I cannot authenticate, so my first axis is the wire, not the hosts. I listen before I speak: passive capture of broadcast name-resolution traffic (LLMNR / NBT-NS / mDNS) and any SMB a mis-pointed client throws at the segment. The brief says the first credential arrives *on a cadence, not on demand* — a periodic authentication I can poison or capture. I expect one NTLMv2 response: a username and a hash to crack offline, i.e. a low-privilege identity in `corp.thornwick.local` — my pivot from outsider to authenticated enumerator.
+With no credential I cannot authenticate, so my first axis is the wire, not hosts. I listen before I speak: passive capture of broadcast name-resolution traffic (LLMNR / NBT-NS / mDNS) and any mis-pointed SMB on the segment. The brief says the first credential arrives *on a cadence, not on demand* — a periodic authentication I can poison or capture. I expect one NTLMv2 response: a low-privilege `corp.thornwick.local` identity and a hash to crack offline — my pivot to authenticated enumerator.
 
 ## Order, and why
 
-1. **Passive / listen** (tcpdump, Responder analyze-only first). Free, silent, zero lockout risk.
-2. **Unauthenticated enumeration** while I wait: `nmap` the three DCs, SMB null sessions, anonymous LDAP, RID cycling, and — critically — read the **lockout and password policy** so I know my budget before I ever guess.
-3. **Act on the first credential:** validate it, then map with BloodHound/SharpHound. Let the graph, not habit, name the road to forest root — Kerberoast, AS-REP, or an ACL/delegation edge, whichever this estate leaves open.
-4. **Forest edge last:** holding the root, read the Thornwick↔Ravensworth trust's *own properties* (direction, transitivity, SID-filtering/quarantine) before moving at it, and traverse only what it permits.
+1. **Passive / listen** (tcpdump, Responder analyze-only). Silent, zero lockout risk.
+2. **Unauthenticated enumeration** while I wait: `nmap` the DCs, SMB null sessions, anonymous LDAP, RID cycling, and the **lockout/password policy** before I ever guess.
+3. **Act on the first credential:** validate, then map with BloodHound/SharpHound. Let the graph name the road to forest root — Kerberoast, AS-REP, or an ACL/delegation edge.
+4. **Forest edge last:** holding the root, read the Thornwick↔Ravensworth trust's *own properties* (direction, transitivity, SID-filtering/quarantine) before moving, and traverse only what it permits.
 
-Safest first, destructive last.
+Safest first, destructive-last.
 
-## Abandon signals (observable, not vibes)
+## Abandon signals (observable)
 
-- After several full poisoning cycles across the cadence with **no authentication reaching my listener**, I stop waiting and pivot to enumeration-derived usernames.
-- If BloodHound shows **no Kerberoastable SPN and no AS-REP-roastable account** reachable from my identity, I drop offline cracking and hunt ACL/delegation edges.
-- If the trust shows **SID-filtering/quarantine enforced with no granted cross-forest principal**, I treat the forest edge as *not traversable by injection* and look for the one legitimately-authorised door.
+- Full poisoning cycles across the cadence, **no authentication reaching my listener** → stop waiting, switch to the contingency below.
+- BloodHound shows **no Kerberoastable SPN and no AS-REP-roastable account** reachable → drop offline cracking, hunt ACL/delegation edges.
+- Trust shows **SID-filtering/quarantine enforced, no granted cross-forest principal** → the edge is *not traversable by injection*; find the one authorised door.
 
 ## Contingency (one road is closed here)
 
-If the listener yields nothing, I do **not** fall back to password guessing — that is the one action that ends this engagement. I widen the *no-password* surface instead: AS-REP-roasting (needs no password), NTLM relay of the captured authentication to a target that permits it, and any credential leaked in SYSVOL/GPP, shares, or LDAP attributes. If offline cracking of the captured hash fails, the BloodHound graph edges — not guessing — become the path to the root.
+The failure I plan for is the listener staying silent — nothing captured, still zero credentials. I do **not** guess passwords; I change *how* the first authentication is obtained, using only credential-free primitives:
 
-## Discipline — account lockout above all
+- **Induce, don't wait.** Flip Responder to active LLMNR/NBT-NS poisoning and add mitm6 (DHCPv6 + WPAD) to pull the periodic authentication to me now. → a named NTLMv2 for a `corp` user.
+- **Relay, don't crack.** If I catch auth I cannot crack and SMB signing is off (`nxc` check first), relay it live with `ntlmrelayx` to LDAP on a DC. → an RBCD/shadow-credential edge on a named computer — a usable auth primitive, no password.
+- **Enumerate if nothing can be induced.** Anonymous LDAP + SMB null-session RID cycling + `kerbrute` AS-REQ userenum build a *validated username list* from zero; then AS-REP-roast any pre-auth-disabled account (username only). → a crackable hash for a named user.
 
-- **Read the policy before any authentication attempt.** First action on the segment is to retrieve the lockout policy unauthenticated (SMB null / anonymous LDAP / `nxc smb <dc> -u '' -p '' --pass-pol`): **threshold**, **observation window**, **reset** duration. No credentialed probe goes out until I have those three numbers.
-- **Separate safe enumeration from risky guessing.** Username existence is checked with Kerberos pre-auth (`kerbrute userenum` / AS-REQ), which does **not** increment `badPwdCount` and cannot lock an account. Only a *password* attempt counts against the threshold.
-- **Hard budget.** If I ever test a password: cap `threshold − 2` per account per observation window, one account at a time, timestamp-logged, spaced beyond the reset window. Capture-and-crack offline always preferred over any online attempt.
-- **Scope is the contract:** only the three named domains; anything else on the segment is untouched.
+Each branch yields a specific object — a principal, an RBCD edge, or a hash — feeding step-3 mapping.
+
+## Discipline — lockout above all
+
+- **Read the policy before any authentication attempt.** First action: retrieve the lockout policy unauthenticated (`nxc smb <dc> -u '' -p '' --pass-pol`) — **threshold**, **observation window**, **reset**. No credentialed probe until I have those three numbers.
+- **Separate safe enumeration from risky guessing.** Username existence via Kerberos pre-auth (`kerbrute userenum`) does **not** increment `badPwdCount` and cannot lock an account; only a *password* attempt counts against the threshold.
+- **Hard budget.** If I test a password: cap `threshold − 2` per account per window, one at a time, timestamp-logged, spaced beyond reset. Offline cracking always preferred.
+- **Scope:** only the three named domains; nothing else on the segment.
 - **No destructive actions.** Everything I write (an ACL, a group, a cert) I log and remove; the removal goes in the report.
-- **Proof over output:** I confirm identity/position (`whoami`, dominance, the cross-forest read) at each milestone, not a zero exit code.
+- **Proof over output:** I confirm identity/position (`whoami`, dominance, the cross-forest read) at each milestone, not a zero exit.
