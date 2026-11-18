@@ -30,7 +30,7 @@
 
 ## 3. Findings
 
-Severities use CVSS 3.1. Each vector is paired with the business consequence, because a score citing only the vector is half a finding.
+Severities use CVSS 3.1 for each weakness's **inherent** severity — the vector, not whether we personally executed it. Where a route was not walked to the end, the finding separates what was **demonstrated** from what remains **potential**, so severity and proof are never conflated. Each vector is paired with a Thornwick-specific consequence, because a score citing only the vector is half a finding.
 
 ### F1 — Broadcast name resolution exposes a domain credential (High, 8.1)
 `CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N`
@@ -45,22 +45,22 @@ Both passwords we needed followed a predictable pattern: `Thornwick-Winter2026` 
 ### F3 — Service account holds unnecessary directory-replication (DCSync) rights (Critical, 9.1)
 `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:N`
 The ERP service account `svc_erp` holds `DS-Replication-Get-Changes` and `-Get-Changes-All` on the `corp` domain head — the "DCSync" right. It can replicate **any** secret in the domain, including the `krbtgt` key and every administrator hash, as if it were a domain controller.
-**Business impact:** this single grant collapses the gap between F2 and total domain compromise — a weak, Kerberoastable password on an account that can replicate the domain means the child domain is one offline crack from complete takeover. No ERP service needs to replicate directory secrets.
+**Business impact:** one cracked service-account password becomes administrative control of the entire `corp` regional domain — every regional user, workstation, server, and the ERP platform — and, via F4, the springboard to the whole forest. No ERP service has any need to replicate directory secrets. **Demonstrated:** we replicated the `corp` domain's master key.
 
 ### F4 — No security isolation between the child domain and the forest root (Critical, 9.0)
 `CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:C/C:H/I:H/A:N`
 With the child's `krbtgt` key (via F3), an attacker forges a Kerberos ticket asserting membership in the root's **Enterprise Admins** group, and the parent accepts it because a parent-child trust **within a single forest does not filter SIDs**. We used this to move from `corp` to full control of `thornwick.local`.
-**Business impact:** this is standard AD behaviour, not a bug — but it means Thornwick's forest has exactly one security boundary (the forest edge), and everything inside it, including the regional child, is equivalent to the root. Compromise of the regional office is compromise of the enterprise. Proof marker, from a Domain-Admin-only file on the root DC: `FLAG_DOMAIN = MER{6d73ed27679a4a644e02b9a089073e0a}`.
+**Business impact:** standard AD behaviour, not a bug — but Thornwick's forest has exactly one security boundary (the forest edge), so a compromise of the regional ERP environment is, with no further weakness, a compromise of every Thornwick domain, system, and administrator enterprise-wide. **Demonstrated:** forest-root rights; we read a Domain-Admin-only file on the root DC — `FLAG_DOMAIN = MER{6d73ed27679a4a644e02b9a089073e0a}`.
 
 ### F5 — AD CS Enterprise CA is vulnerable to ESC8 (Critical, 9.8)
-`CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:N`
-The Enterprise CA `thornwick-CA`, co-located on the root DC, exposes **web enrollment over plain HTTP with no channel protection** — the ESC8 condition. An attacker coerces a DC's machine account to authenticate, relays it to the web-enrollment endpoint, obtains a certificate for the DC, and uses it to become the DC. Confirmed vulnerable with `certipy`; not exploited end-to-end.
-**Business impact:** this is a **second, independent route to forest root** — verified present though not exploited in this test — that does not depend on F1–F4 at all. Fixing the service-account path alone leaves this one open; any plan that treats the demonstrated path as "the" path is defeated by it.
+`CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:N` — *score rates the confirmed vulnerable configuration; exploitation was not executed in this test (see below).*
+The Enterprise CA `thornwick-CA`, co-located on the root DC, exposes **web enrollment over plain HTTP with no channel protection** — the ESC8 condition. The attack coerces a DC's machine account to authenticate, relays it to the web-enrollment endpoint, and obtains a certificate that impersonates the DC — yielding administrative control of the forest.
+**Business impact:** a **second, independent route to control of the entire Thornwick identity platform**, sharing nothing with the service-account path — an attacker who never cracks a password can still seize the directory via Thornwick's own certificate service. **Demonstrated:** vulnerable configuration confirmed with `certipy`. **Potential (not executed):** the takeover needs a privileged relay listener the test platform lacked; exploitation is highly likely from the confirmed settings. Fixing the service-account path leaves this route open.
 
-### F6 — Acquired-forest crown jewels reachable from Thornwick via a foreign-principal group (High, 8.1 — business-critical)
-`CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:C/C:H/I:N/A:N`
-The `ravensworth.local` forest trust is a correctly-configured **forest-transitive trust with SID filtering enabled** — forged SIDs are stripped at the edge, and we confirmed the F4 injection does **not** cross it. However, a Thornwick Universal group (`LegacyAcq`) is the sole member of a Ravensworth resource group (`CrownAccess`) that grants read access to the crown-jewel share. Because `LegacyAcq`'s SID legitimately belongs to the trusted Thornwick forest, it survives SID filtering — so any Thornwick forest administrator can add a principal to `LegacyAcq` and inherit `CrownAccess`. We did, read the documents, and reverted.
-**Business impact:** the controlled-technology data is the reason Thornwick acquired Ravensworth and is governed by export-control obligations. Today it is protected only by the security of the Thornwick forest — which F1–F5 show is insufficient. The CVSS integrity/availability scores are low (we only read), but in Thornwick's terms this is the most serious finding here. Proof marker: `FLAG_FOREST = MER{0257cbc6ee186b7e3ab9228e3ecf47bc}`.
+### F6 — Acquired-forest crown jewels reachable from Thornwick via a foreign-principal group (High, 8.1)
+`CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:C/C:H/I:N/A:N` — *confidentiality-only (we read, did not alter); business severity is higher than the vector, per the impact below.*
+The `ravensworth.local` forest trust is a correctly-configured **forest-transitive trust with SID filtering enabled** — forged SIDs are stripped at the edge, and we confirmed the F4 injection does **not** cross it. However, a Thornwick Universal group (`LegacyAcq`) is the sole member of a Ravensworth resource group (`CrownAccess`) that grants read access to the crown-jewel share. Because `LegacyAcq`'s SID legitimately belongs to the trusted Thornwick forest, it survives SID filtering — so any Thornwick forest administrator can add a principal to `LegacyAcq` and inherit `CrownAccess`.
+**Business impact — the engagement's most serious finding in Thornwick's terms.** The data is export-controlled, so unauthorised access to it is a reportable compliance exposure independent of any system damage. **Demonstrated:** holding the Thornwick forest, we added one principal to `LegacyAcq` and read the controlled-technology document set on the Ravensworth DC, then reverted — proof marker `FLAG_FOREST = MER{0257cbc6ee186b7e3ab9228e3ecf47bc}`. **Standing exposure:** this access is available to any holder of Thornwick forest-admin rights — which the findings above show is readily obtained — so the acquired forest inherits the full risk of the Thornwick forest despite being a separate company.
 
 ---
 
