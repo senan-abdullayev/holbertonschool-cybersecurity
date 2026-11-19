@@ -7,6 +7,11 @@
 
 ---
 
+> **How to read this report.** Section 1 is the plain-language summary written for circulation
+> to any reader — no technical background needed. Sections 2–6 are written for the Active
+> Directory team and necessarily use the exact technical terms, events, and commands those fixes
+> require.
+
 ## 1. The estate — what you actually have
 
 Aldermont is not one network. It is **three separate directories that agreed to trust each other.** Those agreements — not the network diagram — are the real map of who can reach what. Here is the whole estate on one picture:
@@ -79,7 +84,7 @@ Each step below ends at a *boundary*, and the interesting part is the **decision
 4. **Boundary A → it crossed.** We presented that ticket to the forest root. **Decision: the forest root did not check.** Inside a single forest, identities travelling between domains are **not filtered**, so the injected Enterprise-Admins identity was accepted. We became forest-root administrator and read the two root-only resources that `r.bello` is explicitly denied (`C:\RootOnly\intraforest.txt`, `C:\RootOnly\root.txt`).
 5. **Boundary B → it did NOT cross (and this matters more than the successes).** We deliberately pointed the *same* technique at Trentham, injecting a Trentham administrator identity. **Decision: the forest edge removed it before Trentham ever considered it.** The forest trust filters out any identity that (a) belongs to a forest other than the trusted one, or (b) is a built-in high-privilege identity. Our injected identity was both, so it was stripped and the attempt failed. **We did not reach Trentham by this path, and we are not reporting that we did.** *This is the boundary of yours that is working.*
 6. **Boundary B → the door that does open.** Returning to the trust map, we found **`LegacyAcq`** — an Aldermont group labelled *"Acquisition-era cross-forest access (leftover)"* that still holds read rights on Trentham's protected `crown` share. Because this group is a **genuine Aldermont identity** (not a forgery) it passes the filter, and because it was **granted a real permission** in Trentham, membership grants access. We added our controlled account to it, authenticated into Trentham the legitimate way, and read `\\TRENTHAM-DC\crown\crownjewel.txt`. We then removed the membership (see Closeout).
-7. **The migration leftover.** Separately we confirmed the intra-forest **account-history ("SID history")** mechanism — the feature that lets migrated accounts keep their old access — is honoured inside the forest and would carry a privileged identity from child to root exactly as step 4 did. It is **neutralised at the Trentham edge** by the same filter as step 5.
+7. **The migration leftover.** Separately we exercised the intra-forest **account-history ("SID history")** mechanism — the feature that lets migrated accounts keep their old access — as a *real* directory write: we injected the forest root's Enterprise Admins SID into a controlled child account's `sIDHistory` (generating **Event 4765**), confirmed it is honoured inside the forest and carries a privileged identity from child to root exactly as step 4 did, confirmed it is **neutralised at the Trentham edge** by the same filter as step 5, then **reverted it** to its captured original (empty). The write and its removal are fully inventoried with read-back in the Closeout.
 
 ---
 
@@ -122,8 +127,12 @@ The standout is **4765**: adding account history is a directory modification and
   ```
   **Exact scope:** this changes only what Trentham will accept from the **Aldermont** forest across trust B; it does not touch trust A, the intra-forest behaviour, or any other trust. Default is `No`, and `No` is correct; the migration left it `Yes`.
 - **Close the actual door (the leftover grant).** Re-enabling filtering does not remove a *native* grant, so also **remove `LegacyAcq`'s rights on the Trentham `crown` resource** and delete the stale membership path, then inventory every other Aldermont group or foreign security principal holding rights inside Trentham.
-- **Stricter posture — selective authentication, and what it costs Trentham.** For defence in depth, set the forest trust to **selective authentication** so an Aldermont principal reaches a Trentham resource only where Trentham has explicitly set "Allowed to authenticate." **Cost to Trentham:** every legitimate cross-forest access must then be granted per-resource; anything relying on today's blanket forest-wide access breaks until re-permitted, and Trentham's admins own the ongoing overhead of that allow-list. Correct trade, but an operational commitment, not a checkbox.
-- **The migration artefact (account history).** Account history should have been **cleared once the migration completed years ago** — it is transitional, not permanent. Sweep both directories for stray `sIDHistory` values and remove them, and turn on the **4765/4766** auditing above so the next one is caught the day it is written.
+- **Stricter posture — selective authentication, named exactly, and what it costs Trentham.** For defence in depth, Trentham (the resource side of trust B) sets the incoming trust from Aldermont to **selective authentication**, so an Aldermont principal reaches a Trentham resource *only* where Trentham has explicitly granted it. On a `trentham.local` DC:
+  ```
+  netdom trust trentham.local /domain:aldermont.local /SelectiveAuth:yes
+  ```
+  then, per Trentham resource that Aldermont legitimately needs, grant the Aldermont principal the **"Allowed to authenticate"** right on that computer object (its ACL), e.g. on `TRENTHAM-DC` for the `crown` share only. **Cost to Trentham:** every legitimate cross-forest access must then be granted per-resource; anything relying on today's blanket forest-wide access breaks until re-permitted, and Trentham's admins own the ongoing overhead of that allow-list. Correct trade, but an operational commitment, not a checkbox. This is specific to **path B (the Trentham crossings)** and touches neither trust A nor the intra-forest paths.
+- **The migration artefact (account history) — specific to the step-7 path.** Account history should have been **cleared once the migration completed years ago** — it is transitional, not permanent. For our own exercise this is already done: the `sIDHistory` we wrote in step 7 was reverted and read back empty (Closeout, Write path 2). For the *estate*, sweep **both** directories for stray `sIDHistory` values and remove any found, and turn on the **4765/4766** auditing above so the next one is caught the day it is written.
 
 ---
 
@@ -140,7 +149,13 @@ We exercised the trust paths our scope covered. The following are *additional* t
 
 ## 6. Closeout — every object we wrote, and the read-back proving it is gone
 
-We committed to minimal, reversible changes and to proving removal with an **independent read-back** for each write path. The complete inventory of directory modifications is below — there was exactly one, plus one write path we deliberately did **not** persist, and both are evidenced.
+We committed to minimal, reversible changes and to proving removal with an **independent read-back** for each write path. There were **exactly two** directory writes — one in `aldermont.local`, one in `corp.aldermont.local` — both reverted and both evidenced below; **no** object was written in `trentham.local` (we authenticated in and read a single file, nothing more). The complete per-directory inventory:
+
+| Directory / forest | Object · attribute written | Status |
+|--------------------|----------------------------|--------|
+| `aldermont.local` (root) | `CN=LegacyAcq` · `member` | performed → **reverted** (read-back below) |
+| `corp.aldermont.local` (child) | `CN=r.bello` · `sIDHistory` | performed → **reverted** (read-back below) |
+| `trentham.local` (acquired) | **none** — read-only (`\\TRENTHAM-DC\crown\crownjewel.txt`) | no write |
 
 ### Write path 1 — group membership (performed, then reverted)
 
