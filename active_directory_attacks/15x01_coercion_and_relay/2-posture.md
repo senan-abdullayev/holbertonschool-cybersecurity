@@ -13,6 +13,16 @@ channel-binding banner, WebDAV module), and the Task-1 coercion result. Where a
 tool's output is inconclusive it is labelled as such and the authoritative signal
 is named.
 
+Evidence discipline for every verdict below. An **open port is not a relay
+sink**: each entry separates (a) the nmap **port state**, from (b) the
+signing / channel-binding / EPA **posture**, from (c) the **relay conclusion**
+drawn from them. Each conclusion is tagged at one of three evidence levels —
+**CLOSED (confirmed)**, a defence positively observed; **OPEN (confirmed)**, a
+weakness positively observed *and* demonstrated by a relay outcome; or
+**conditional**, where the banner is non-authoritative and viability is claimed
+only to the extent a relay outcome demonstrates it. Verdicts are host-scoped and
+do not generalise across hosts.
+
 ## Hosts
 
 - **CALDER-DC01** — 10.20.0.10, Windows Server 2025 Core, domain controller,
@@ -37,22 +47,32 @@ Every entry below maps back to this `nmap -p-` sweep.
 
 ### SMB — port 445
 - Protocol SMB 3.1.1. Signing **required**. Channel binding / EPA n/a.
-- Relay verdict: **CLOSED** (a relayed session cannot produce a valid signature).
-- Evidence: `nxc smb 10.20.0.10` reports `(signing:True)`; `nmap` reports
-  `smb2-security-mode: Message signing enabled and required`.
+- Relay verdict: **CLOSED (confirmed)** — scoped to CALDER-DC01 only; this does
+  not generalise. SMB relay *to the DC* is closed because signing is required; SMB
+  relay to SRV-LEGACY is separately **OPEN** (Section B). A relayed session to
+  this host cannot produce a valid signature.
+- Evidence: port 445 open (`nmap`) → posture `(signing:True)` from
+  `nxc smb 10.20.0.10` and `smb2-security-mode: Message signing enabled and
+  required` from `nmap` → conclusion CLOSED. The closed call rests on the
+  positively observed signing requirement, not merely on the open port.
 
 ### LDAP — port 389 (plaintext)
 - Protocol LDAP. Signing **enforced** (DC hardening). Channel binding n/a on
   plaintext.
-- Relay verdict: **SMB-origin CLOSED, WebDAV/HTTP-origin OPEN.** An SMB-origin
-  auth carries the signing-negotiated flag, so the bind demands signing and is
-  rejected. An HTTP/WebDAV origin never negotiates SMB signing, so the bind is
-  accepted. This is the intended LDAP-relay sink.
-- Evidence: `nxc ldap 10.20.0.10 --port 389` banner shows `(signing:None)
-  (channel binding:Unknown)` — NetExec cannot actively confirm enforcement, so
-  this banner is **non-authoritative**; the authoritative proof is the relay
-  outcome (SMB-origin rejected / WebDAV-origin accepted) plus documented DC
-  hardening.
+- Relay verdict: **SMB-origin CLOSED (confirmed); WebDAV/HTTP-origin viable —
+  CONDITIONAL**, established by the relay outcome, **not** by the banner. An
+  SMB-origin auth carries the signing-negotiated flag, so the bind demands signing
+  and is rejected. An HTTP/WebDAV origin never negotiates SMB signing, so the bind
+  is accepted. This is the intended LDAP-relay sink, confirmed in the LDAPRELAY
+  task.
+- Evidence: port 389 open (`nmap`). The `nxc ldap 10.20.0.10 --port 389` banner
+  shows `(signing:None) (channel binding:Unknown)`, but NetExec cannot actively
+  confirm enforcement, so this banner is **non-authoritative and is explicitly
+  not the basis for the OPEN call** — a banner cannot distinguish viable from
+  conditionally viable. The authoritative basis is the demonstrated relay outcome
+  (SMB-origin bind rejected / WebDAV-origin bind accepted) plus documented DC
+  hardening. Until that relay is run, the HTTP-origin verdict is stated as
+  conditional.
 
 ### LDAPS — port 636
 - Protocol LDAP over TLS. Channel binding / EPA **on**.
@@ -63,10 +83,13 @@ Every entry below maps back to this `nmap -p-` sweep.
 ### Global Catalog LDAP — port 3268
 - Protocol LDAP (Global Catalog). Signing **enforced** (GC mirrors the
   directory LDAP policy). Channel binding n/a on plaintext.
-- Relay verdict: same as 389 — **SMB-origin CLOSED, HTTP-origin OPEN.** Listed
-  separately because the GC is a distinct listener often omitted from a map.
-- Evidence: `nxc ldap 10.20.0.10 --port 3268` banner `(signing:None)` —
-  non-authoritative, same caveat as port 389.
+- Relay verdict: same basis as 389 — **SMB-origin CLOSED (confirmed);
+  HTTP-origin viable — CONDITIONAL**, established by the relay outcome, not by the
+  `signing:None` banner. Listed separately because the GC is a distinct listener
+  often omitted from a map.
+- Evidence: port 3268 open (`nmap`); `nxc ldap 10.20.0.10 --port 3268` banner
+  `(signing:None)` is **non-authoritative** and not the basis for viability —
+  same caveat and same relay-outcome basis as port 389.
 
 ### Global Catalog LDAPS — port 3269
 - Protocol LDAP-GC over TLS. Channel binding / EPA **on**.
@@ -104,9 +127,17 @@ Every entry below maps back to this `nmap -p-` sweep.
 
 ### SMB — port 445
 - Protocol SMB 3.1.1. Signing **not required**. Channel binding / EPA n/a.
-- Relay verdict: **OPEN** — this is the SMB-relay target for the exec leg.
-- Evidence: `nxc smb 10.20.0.20` reports `(signing:False)`; `nmap` reports
-  `smb2-security-mode: Message signing enabled but not required`.
+- Port state vs. relay sink (kept separate): port 445 being **open** (`nmap`) is
+  not itself a relay sink. The sink is **confirmed** in two further steps —
+  `nxc smb 10.20.0.20` reports `(signing:False)` (no signature required), and the
+  SMB relay in the exec leg actually lands a session on this host. Open port →
+  unsigned posture → demonstrated relay = confirmed sink.
+- Relay verdict: **OPEN (confirmed)** — the SMB-relay target for the exec leg, and
+  the only host on which SMB relay actually succeeds.
+- Evidence: port 445 open (`nmap`); posture `(signing:False)` from
+  `nxc smb 10.20.0.20` and `smb2-security-mode: Message signing enabled but not
+  required` from `nmap`; plus the successful relayed session (SMBRELAY task) as
+  the positive confirmation that the open port is a real sink.
 
 ### WinRM (HTTP) — port 5985
 - Protocol HTTP (WS-Man).
