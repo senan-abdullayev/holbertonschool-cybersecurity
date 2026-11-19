@@ -149,12 +149,16 @@ The standout is **4765**: adding account history is a directory modification and
 
 ## 5. The wider surface — what Aldermont should assess next
 
-We exercised the trust paths our scope covered. The following are *additional* trust-abuse avenues we did **not** test and that Aldermont should have assessed — listed as gaps in your assurance, not as a to-do list of attacks:
+We exercised only the trust paths in scope. The avenues below were **not assessed** and belong in the scope of your **next** engagement. Each is a bounded gap plus the specific hosts, trusts, or principals to put in scope — not an attack method and not a fix.
 
-- **Delegation reachable across a trust.** Kerberos delegation (unconstrained, constrained, resource-based) that spans a trust can turn a foothold on one side into authentication on the other. *(The estate contained a deliberate unconstrained-delegation decoy; real delegation across your trusts deserves a proper review.)*
-- **Coercion across a trust.** Techniques that *force* a server or DC to authenticate to an attacker (printer/EFS-style coercion) can pull privileged authentication across a trust boundary. Assess which of your machines can be coerced and where that authentication can land.
-- **Group memberships held by foreign principals.** `LegacyAcq` was one forgotten grant; a full inventory of **every** cross-forest and foreign-security-principal membership in both directories is the single highest-value hygiene task to come out of this report.
-- **The forest-to-cloud boundary.** The most important trust edge most organisations now own is the one between Active Directory and a **cloud identity provider** (Entra ID / federation / directory sync). Compromise of the on-premises forest very often extends to the cloud tenant through that connector. This is where this class of attack is heading, and it should be in scope for your next assessment.
+| Unexercised avenue | Gap (what we did **not** assess) | Scope for the next assessment (specific) |
+|--------------------|----------------------------------|------------------------------------------|
+| **Delegation spanning a trust** | Kerberos delegation (unconstrained / constrained / RBCD) that crosses trust A or B was not evaluated. | Enumerate `TrustedForDelegation`, `msDS-AllowedToDelegateTo`, and `msDS-AllowedToActOnBehalfOfOtherIdentity` on all three DCs — ALDER-ROOT-DC (`.10`), ALDER-CHILD-DC (`.11`), TRENTHAM-DC (`.20`) — and on every member server, including the known unconstrained-delegation decoy host. |
+| **Coercion across a trust** | Whether a coercible machine can be forced to authenticate across trust A or B was not tested. | Assess MS-RPRN / MS-EFSRPC exposure on ALDER-ROOT-DC, ALDER-CHILD-DC, and TRENTHAM-DC, and whether coerced authentication from one forest lands in the other across trust B. |
+| **Foreign-principal / cross-forest grants** | Only `LegacyAcq` was confirmed; the rest of the cross-forest grant surface was not inventoried. | Inventory **every** foreign-security-principal and cross-forest group membership in both `aldermont.local` and `trentham.local`, including `TRENTHAM\CrownAccess` (the domain-local group gating the crown resource) and any other Aldermont group holding Trentham rights. |
+| **Forest-to-cloud boundary** | Not assessed at all — out of scope for this engagement. | Determine whether `aldermont.local` synchronises to a cloud IdP (Entra ID / federation); if so, scope the sync-connector host and its service account (e.g. Entra Connect / `MSOL_*`) as a trust edge equal in weight to trust B. |
+
+The durable takeaway is the **method**, not the list: enumerate every trust and every foreign principal, then triage each as closed / open / looks-closed-but-isn't — the same discipline that produced this report, re-run as these four surfaces change.
 
 ---
 
