@@ -105,6 +105,15 @@ This is the **SID filtering / SID-history treatment** applied at the trust: it s
 
 ## 4. Detection and remediation
 
+**Per path — detection → remediation → closeout, at a glance.** Every path we touched is below with all three facets tied together; the detail follows underneath.
+
+| Path | Detection (event) | Remediation (specific control) | Closeout (what we reverted · proof) |
+|------|-------------------|--------------------------------|-------------------------------------|
+| **Child → root** (forged EA ticket, Boundary A — CROSSED) | `4662` (krbtgt DCSync) + `4768/4769` with anomalous group content | containment — treat the forest as one trust zone; hold child-domain admins to Enterprise-Admin standard; protect and **rotate `krbtgt` twice** | no directory object written (root reads only); forged tickets disposable; `krbtgt` double-reset invalidates them |
+| **Trentham by forgery** (injected identity, Boundary B — BLOCKED) | cross-realm `4769` failure / ticket rejection at the forest edge | none required — the boundary held; **keep SID filtering on** (do not re-enable SID history on trust B) | nothing written; the attempt failed and reached nothing |
+| **Trentham via `LegacyAcq`** (genuine grant, Boundary B — CROSSED) | `4756` (member added to universal group) + `4624` for a foreign principal on `TRENTHAM-DC` | remove `LegacyAcq`'s grant on the Trentham `crown` resource; set the trust to **selective authentication** (`netdom trust trentham.local /domain:aldermont.local /SelectiveAuth:yes`) + per-resource "Allowed to authenticate" | `LegacyAcq` membership reverted; read-back empty (§6, Write path 1) |
+| **sIDHistory** (intra-forest aside — not a boundary crossing) | `4765` "SID History was added to an account" (`4766` = failed) | sweep **both** directories for stray `sIDHistory` and remove; enable **4765/4766** auditing so the next write is caught the day it happens | `svc.backup` `sIDHistory` reverted; read-back empty (§6, Write path 2) |
+
 **What each step wrote to your logs** (these are the records a monitoring team would key on):
 
 | Step | Record on the DC |
