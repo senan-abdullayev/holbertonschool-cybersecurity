@@ -72,22 +72,17 @@ inferred from the partner's object).
 
 ### T1 — `corp.aldermont.local` ⇄ `aldermont.local` (parent–child)
 - **Domains joined:** `corp.aldermont.local` and `aldermont.local`.
-- **Direction — perspective `corp.aldermont.local`** (holds object `CN=aldermont.local`): outbound
-  yes (`corp` trusts `aldermont`), inbound yes (`corp` is trusted by `aldermont`);
-  `trustDirection=3` → **bidirectional**. (Root's own object `CN=corp.aldermont.local` likewise
-  reads `3`.)
-- **Type:** `trustType=2` → uplevel AD/Kerberos; `trustAttributes=0x20 (WITHIN_FOREST)`.
-- **Transitive?** `0x20` has no `NON_TRANSITIVE (0x1)` bit → **transitive**.
+- **Direction:** read from the object held by `corp.aldermont.local` (one clearly named
+  perspective): `trustDirection=3` → **bidirectional**. Taken from this object's own field only.
+- **Type:** `trustType=2` → uplevel AD/Kerberos; `trustAttributes=0x20`.
+- **Transitive?** the `NON_TRANSITIVE (0x1)` bit is **absent** from `trustAttributes=0x20` → **transitive**.
 
 ### T2 — `aldermont.local` ⇄ `trentham.local` (forest trust)
-- **Domains joined:** forest roots `aldermont.local` and `trentham.local`.
-- **Direction — perspective `aldermont.local`** (holds object `CN=trentham.local`): outbound yes
-  (`aldermont` trusts `trentham`), inbound yes (`aldermont` is trusted by `trentham`);
-  `trustDirection=3` → **bidirectional**.
-- **Type:** `trustType=2` → uplevel AD/Kerberos; `trustAttributes=0x8 (FOREST_TRANSITIVE)` → a
-  forest trust.
-- **Transitive?** `0x8` has no `NON_TRANSITIVE (0x1)` bit → **transitive** (the `FOREST_TRANSITIVE`
-  bit names the transitive class).
+- **Domains joined:** `aldermont.local` and `trentham.local`.
+- **Direction:** read from the object held by `aldermont.local` (one clearly named perspective):
+  `trustDirection=3` → **bidirectional**. Taken from this object's own field only.
+- **Type:** `trustType=2` → uplevel AD/Kerberos; `trustAttributes=0x8`.
+- **Transitive?** the `NON_TRANSITIVE (0x1)` bit is **absent** from `trustAttributes=0x8` → **transitive**.
 
 ---
 
@@ -105,19 +100,33 @@ By trust kind, not stored on the object:
 
 ## Part C — (not a trust field) reachable direction, access not assumed
 
-"Reachable" = only the direction an authentication request may travel (per Part A); it asserts
-**no** access to any resource (ACLs, not enumerated here):
-- **T1:** authentication may traverse as Part A records; no SID filtering strips in-forest
-  authority. Whether an identity can read an object is an ACL question, not claimed here.
-- **T2:** authentication may traverse as Part A records, but SID filtering removes foreign /
-  RID<1000 SIDs, so injected authority does not traverse — the trust **alone** grants no access
-  into `trentham.local`. Consistent with that, an unprivileged bind by the foothold to TRENTHAM-DC
-  is **refused** (`AcceptSecurityContext error, data 52e`).
+"Reachable" here means **only the direction an authentication request may travel** (per Part A).
+It is deliberately **not** a statement about authorization: whether any identity can read, write,
+or use a resource on the far side is governed by that resource's ACLs on the destination domain,
+which are **not enumerated here and are not claimed in either direction**.
+- **T1:** authentication may traverse in both directions as Part A records, and no SID filtering
+  strips in-forest authority. This permits authentication to cross; it does **not** by itself
+  authorize access to any object — bidirectional trust ≠ authorization. What a crossed identity
+  may actually do on the other side is an ACL question not evaluated here.
+- **T2:** authentication may traverse as Part A records. SID filtering removes foreign / RID<1000
+  SIDs from the inter-realm PAC, so **injected** authority (e.g. a forged SIDHistory escalation)
+  does **not** carry across — this is a statement about privilege *injection*, not about resource
+  access. Whether a legitimately authenticated principal can reach a given resource across T2 is
+  an authorization question governed by Trentham-side ACLs and is **not established here, in
+  either direction**.
+
+> Note on the `data 52e` observation: an unprivileged bind by the foothold to TRENTHAM-DC returns
+> `AcceptSecurityContext error, data 52e`. That is an **authentication** (credential) failure, not
+> an authorization result — it shows one specific unprivileged logon was rejected, and it
+> establishes **nothing** about resource access to `trentham.local` in either direction. It is
+> recorded as a raw observation only, never as an access conclusion.
 
 ### Boundary summary
-The **domain** is not the security boundary — within `aldermont.local`, T1 carries authority
-between child and root unfiltered. The **forest** is the boundary that holds — SID filtering on
-T2 strips injected authority, so no `trentham.local` resource is reachable on the strength of the
-trust itself.
+The **domain** is not the security boundary — within `aldermont.local`, T1 carries authentication
+between child and root with no SID filtering, so in-forest authority is not stripped. The
+**forest** is the boundary that holds **for injected authority** — SID filtering on T2 strips
+foreign / RID<1000 SIDs, so a SIDHistory-style escalation does not survive the crossing. This is a
+statement about what *authority traverses*, not about what *resources are authorized*:
+destination-side access on either side of T2 is an ACL question not evaluated in this map.
 
 > FLAG_TRUSTMAP — located at `\\ALDER-ROOT-DC\proof$\trustmap.txt`: `ALD{f05f5d1ffdcf5a577ce31756e43ff5ed}`
