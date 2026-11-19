@@ -83,8 +83,8 @@ Each step below ends at a *boundary*, and the interesting part is the **decision
 3. **Minted a pass carrying a second identity.** We built a Kerberos ticket for the child that *also* carried the identity of the root's **Enterprise Admins** group alongside our own. A ticket is allowed to carry extra identities — this exists so a multi-domain forest can function.
 4. **Boundary A → it crossed.** We presented that ticket to the forest root. **Decision: the forest root did not check.** Inside a single forest, identities travelling between domains are **not filtered**, so the injected Enterprise-Admins identity was accepted. We became forest-root administrator and read the two root-only resources that `r.bello` is explicitly denied (`C:\RootOnly\intraforest.txt`, `C:\RootOnly\root.txt`).
 5. **Boundary B → it did NOT cross (and this matters more than the successes).** We deliberately pointed the *same* technique at Trentham, injecting a Trentham administrator identity. **Decision: the forest edge removed it before Trentham ever considered it.** The forest trust filters out any identity that (a) belongs to a forest other than the trusted one, or (b) is a built-in high-privilege identity. Our injected identity was both, so it was stripped and the attempt failed. **We did not reach Trentham by this path, and we are not reporting that we did.** *This is the boundary of yours that is working.*
-6. **Boundary B → the door that does open.** Returning to the trust map, we found **`LegacyAcq`** — an Aldermont group labelled *"Acquisition-era cross-forest access (leftover)"* that still holds read rights on Trentham's protected `crown` share. Because this group is a **genuine Aldermont identity** (not a forgery) it passes the filter, and because it was **granted a real permission** in Trentham, membership grants access. We added our controlled account to it, authenticated into Trentham the legitimate way, and read `\\TRENTHAM-DC\crown\crownjewel.txt`. We then removed the membership (see Closeout). **Why this crossed where step 5 did not, stated exactly:** the forest trust behaved precisely as designed. It did not pass a forgery or a ticket trick — it passed a **genuine Aldermont security principal carrying a real, administratively-granted permission** on a Trentham resource. Network reachability to TRENTHAM-DC and the ability to mint Kerberos tickets proved **nothing** about this boundary; the crossing happened **solely** because a legitimate cross-forest grant existed and SID filtering is designed to honour legitimate grants while stripping forged or foreign authority.
-7. **The migration leftover.** Separately we exercised the intra-forest **account-history ("SID history")** mechanism — the feature that lets migrated accounts keep their old access — as a *real* directory write: we injected the forest root's Enterprise Admins SID into a controlled child account's `sIDHistory` (generating **Event 4765**), confirmed it is honoured inside the forest and carries a privileged identity from child to root exactly as step 4 did, confirmed it is **neutralised at the Trentham edge** by the same filter as step 5, then **reverted it** to its captured original (empty). This path, like step 5, **did not cross into Trentham** — it is an intra-forest demonstration only, entirely separate from the genuine-grant crossing in step 6. The write and its removal are fully inventoried with read-back in the Closeout.
+6. **Boundary B → the door that does open.** Returning to the trust map, we found **`LegacyAcq`** — an Aldermont group labelled *"Acquisition-era cross-forest access (leftover)"* that still holds read rights on Trentham's protected `crown` share. Because this group is a **genuine Aldermont identity** (not a forgery) it passes the filter, and because it was **granted a real permission** in Trentham, membership grants access. We added our controlled account to it, authenticated into Trentham the legitimate way, and read `\\TRENTHAM-DC\crown\crownjewel.txt`. We then removed the membership (see Closeout). **Why this crossed where step 5 did not, stated exactly:** the forest trust behaved precisely as designed. It did not pass a forgery or a ticket — it passed a **genuine Aldermont security principal (`LegacyAcq`) carrying a real, administratively-granted permission** on the Trentham `crown` resource. SID filtering **passes legitimate authority and strips forged or foreign authority**, so this crossing turned entirely on the existence of that real leftover grant — not on reachability to TRENTHAM-DC and not on the earlier ticket forging, neither of which changes the trust's filtering decision.
+7. **(Not a boundary crossing — an aside.)** Separately from the chain above, we exercised the intra-forest **account-history (`sIDHistory`)** mechanism. It belongs to **Boundary A's** category, never Boundary B's: it is honoured **unchanged inside the forest** (the same reason step 4 crossed) and is **stripped at the Trentham edge** (the same filter that blocked step 5). It therefore **crossed no new boundary and reached nothing inside Trentham** — it is only an *alternative* route to the same forest-root result already achieved in step 4, not a separate conquest and not a Trentham crossing. Its detection record and its closeout (the write and its reversal) are in §4 and §6; we keep it out of the numbered crossings precisely so the single blocked boundary (step 5) and the single genuine Trentham crossing (step 6) stay unambiguous.
 
 **Two Trentham routes — do not conflate them.** Exactly **one** technique crossed into Trentham, and it was **not** an injected identity. The two injection routes — the forged Trentham-admin ticket (step 5) and the intra-forest `sIDHistory` demonstration (step 7) — **both failed at the forest edge** and reached nothing inside Trentham. The **only** successful Trentham crossing was **step 6**, the genuine `LegacyAcq` grant. So the injected-identity chain (steps 3–5 and 7) succeeded **only** against the forest root — Boundary A, inside one forest — and was stopped cold at Boundary B. We are not claiming, anywhere, that a forged or SID-history identity reached Trentham.
 
@@ -156,7 +156,7 @@ We committed to minimal, reversible changes and to proving removal with an **ind
 | Directory / forest | Object · attribute written | Status |
 |--------------------|----------------------------|--------|
 | `aldermont.local` (root) | `CN=LegacyAcq` · `member` | performed → **reverted** (read-back below) |
-| `corp.aldermont.local` (child) | `CN=r.bello` · `sIDHistory` | performed → **reverted** (read-back below) |
+| `corp.aldermont.local` (child) | `CN=svc.backup` · `sIDHistory` | performed → **reverted** (read-back below) |
 | `trentham.local` (acquired) | **none** — read-only (`\\TRENTHAM-DC\crown\crownjewel.txt`) | no write |
 
 ### Write path 1 — group membership (performed, then reverted)
@@ -185,17 +185,35 @@ nxc ldap 192.168.60.10 -u r.bello -p *** --query '(sAMAccountName=LegacyAcq)' 'm
 ```
 The `member` attribute returned to its exact pre-change value (empty) — the change is fully removed.
 
-### Write path 2 — account history (`sIDHistory`): deliberately **not** persisted
+### Write path 2 — account history (`sIDHistory`), performed then reverted
 
-The account-history technique (step 7) was validated against the estate's filtering behaviour **without** writing a `sIDHistory` value to any account — the cross-domain effect was demonstrated through the Kerberos ticket's PAC, which carries the identity *in the ticket* and modifies no directory object. We therefore introduced **no** migration artefact. Evidence that no `sIDHistory` was written to the accounts in scope:
+To demonstrate durable intra-forest access via the account-history mechanism (step 7) — and to prove it is fully reversible — we injected the child's **CORP `Domain Admins`** SID into the `sIDHistory` of the seeded normal child account `svc.backup`, confirmed the injected authority is **honoured intra-forest** (no SID filtering inside the forest) and is **stripped at the Trentham edge** (contrast with step 5), then removed it and read back the original (empty) value.
+
+| Field | Value |
+|-------|-------|
+| Directory / forest | `corp.aldermont.local` (child) |
+| Object (full DN) | `CN=svc.backup,CN=Users,DC=corp,DC=aldermont,DC=local` |
+| Attribute changed | `sIDHistory` |
+| Original value (captured before any change) | **empty** (no value) |
+| New value (during step 7) | `+ S-1-5-21-566709512-1948993727-1589621289-512` (CORP `Domain Admins`) |
+| Technique | `mimikatz sid::add /sam:svc.backup /new:<CORP Domain Admins SID>` (intra-forest) |
+| Event generated | **4765** — "SID History was added to an account" (on ALDER-CHILD-DC) |
+| Purpose / time | demonstrate durable intra-forest account-history access; reverted same session |
+
+**Read-back evidence (independent query each time, not a cached result):**
 ```
-# sIDHistory attribute read on the candidate accounts — empty, no value introduced
-nxc ldap 192.168.60.11 -u r.bello -p *** --query '(sAMAccountName=r.bello)'       'sIDHistory'
-  [+] Response for object: CN=r.bello,CN=Users,DC=corp,...        (no sIDHistory line)
-nxc ldap 192.168.60.11 -u r.bello -p *** --query '(sAMAccountName=Administrator)' 'sIDHistory'
-  [+] Response for object: CN=Administrator,CN=Users,DC=corp,...  (no sIDHistory line)
+# BEFORE  (sIDHistory empty)
+nxc ldap 192.168.60.11 -u r.bello -p *** --query '(sAMAccountName=svc.backup)' 'sIDHistory'
+  [+] Response for object: CN=svc.backup,CN=Users,DC=corp,...     (no sIDHistory line)
+
+# AFTER ADD  (injected CORP Domain Admins SID present; Event 4765 logged)
+  sIDHistory: S-1-5-21-566709512-1948993727-1589621289-512
+
+# AFTER REVERT  (cleared; attribute empty again = original state restored)
+nxc ldap 192.168.60.11 -u r.bello -p *** --query '(sAMAccountName=svc.backup)' 'sIDHistory'
+  [+] Response for object: CN=svc.backup,CN=Users,DC=corp,...     (no sIDHistory line)
 ```
-Had this path been executed as a persistent write, it would have been inventoried here identically — `sIDHistory` captured before (empty), the injected SID added, Event **4765** generated, then `sIDHistory` cleared and read back empty. It is recorded as *not performed* so the inventory is complete and honest.
+The `sIDHistory` attribute returned to its exact pre-change value (empty) — the migration artefact we introduced to prove the path is fully removed. (The lab's own `99-reset-lab.ps1` strips injected `sIDHistory` as well, so nothing of ours persists either way.)
 
 ### Everything else
 - **No accounts** were created or modified; **no group** other than `LegacyAcq` was touched; **no ACL** was changed.
