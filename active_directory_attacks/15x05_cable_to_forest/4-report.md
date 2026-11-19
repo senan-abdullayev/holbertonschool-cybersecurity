@@ -34,12 +34,12 @@ Severities use CVSS 3.1 for each weakness's **inherent** severity — the vector
 
 ### F1 — Broadcast name resolution exposes a domain credential (High, 8.1)
 `CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N`
-A scheduled task on the child DC (`Kessler-BackupProbe`, running as `corp\b.okafor`) reaches out to a file-server name that does not resolve cleanly, and the segment permits LLMNR/NBT-NS/mDNS. By answering that broadcast we captured the account's NetNTLMv2 authentication on its cadence and cracked the password offline.
+A scheduled task on the child DC (`Kessler-BackupProbe`, running as `corp\b.okafor`) reaches for a file-server name that does not resolve, and the segment permits LLMNR/NBT-NS/mDNS. Answering that broadcast captured the account's NetNTLMv2 authentication on its cadence; we cracked it offline.
 **Business impact:** the front door — it turns anyone who reaches an office network port into an authenticated Thornwick domain user, with no credential issued and no lockout to raise an alarm. Every other finding is reachable from here.
 
 ### F2 — Guessable passwords on user and service accounts (High, 8.1)
 `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N`
-Both passwords we needed followed a predictable pattern: `Thornwick-Winter2026` (company + season + year) and `Thornwick2026` (company + year). Neither is in standard breach wordlists, but both fall in seconds to a company-themed candidate list — exactly what a targeted attacker builds. The service account `svc_erp` is additionally **Kerberoastable** (SPN `MSSQLSvc/erp.corp.thornwick.local`), so any authenticated user can request its hash offline without touching the account.
+Both passwords we needed followed a predictable pattern: `Thornwick-Winter2026` (company + season + year) and `Thornwick2026` (company + year). Neither is in standard breach wordlists, but both fall in seconds to a company-themed candidate list. The service account `svc_erp` is additionally **Kerberoastable** (SPN `MSSQLSvc/erp.corp.thornwick.local`), so any authenticated user can request its hash offline without touching the account.
 **Business impact:** password strength is the only control between an ordinary Thornwick staff login and a powerful service account, and it is not holding. Because `svc_erp` is Kerberoastable, F1 is not even required — any Thornwick domain user can pull and crack it.
 
 ### F3 — Service account holds unnecessary directory-replication (DCSync) rights (Critical, 9.1)
@@ -49,7 +49,7 @@ The ERP service account `svc_erp` holds `DS-Replication-Get-Changes` and `-Get-C
 
 ### F4 — No security isolation between the child domain and the forest root (Critical, 9.0)
 `CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:C/C:H/I:H/A:N`
-With the child's `krbtgt` key (via F3), an attacker forges a Kerberos ticket asserting membership in the root's **Enterprise Admins** group, and the parent accepts it because a parent-child trust **within a single forest does not filter SIDs**. We used this to move from `corp` to full control of `thornwick.local`.
+With the child's `krbtgt` key (via F3), an attacker forges a Kerberos ticket asserting membership in the root's **Enterprise Admins** group, and the parent accepts it because a parent-child trust **within one forest does not filter SIDs**. We used this to move from `corp` to full control of `thornwick.local`.
 **Business impact:** standard AD behaviour, not a bug — but Thornwick's forest has exactly one security boundary (the forest edge), so a compromise of the regional ERP environment is, with no further weakness, a compromise of every Thornwick domain, system, and administrator enterprise-wide. **Demonstrated:** forest-root rights; we read a Domain-Admin-only file on the root DC — `FLAG_DOMAIN = MER{6d73ed27679a4a644e02b9a089073e0a}`.
 
 ### F5 — AD CS Enterprise CA is vulnerable to ESC8 (Critical, 9.8)
@@ -60,7 +60,7 @@ The Enterprise CA `thornwick-CA`, co-located on the root DC, exposes **web enrol
 ### F6 — Acquired-forest crown jewels reachable from Thornwick via a foreign-principal group (High, 8.1)
 `CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:C/C:H/I:N/A:N` — *confidentiality-only; business severity exceeds the vector, per impact below.*
 The `ravensworth.local` forest trust is a correctly-configured **forest-transitive trust with SID filtering enabled** — forged SIDs are stripped at the edge, and we confirmed the F4 injection does **not** cross. However, a Thornwick Universal group (`LegacyAcq`) is the sole member of a Ravensworth resource group (`CrownAccess`) that grants read access to the crown-jewel share. Because `LegacyAcq`'s SID legitimately belongs to the trusted Thornwick forest, it survives SID filtering — so any Thornwick forest admin can add a principal to `LegacyAcq` and inherit `CrownAccess`.
-**Business impact — the most serious finding in Thornwick's terms.** The data is export-controlled, so unauthorised access is a reportable compliance exposure independent of any system damage. **Demonstrated:** holding the Thornwick forest, we added one principal to `LegacyAcq`, read the controlled-technology documents on the Ravensworth DC, and reverted — `FLAG_FOREST = MER{0257cbc6ee186b7e3ab9228e3ecf47bc}`. **Standing exposure:** available to any holder of Thornwick forest-admin rights — readily obtained, per the findings above — so the acquired forest inherits the full risk of the Thornwick forest despite being a separate company.
+**Business impact — the most serious finding in Thornwick's terms.** The data is export-controlled, so unauthorised access is a reportable compliance exposure independent of any system damage. **Demonstrated:** holding the Thornwick forest, we added one principal to `LegacyAcq`, read the controlled-technology documents on the Ravensworth DC, and reverted — `FLAG_FOREST = MER{0257cbc6ee186b7e3ab9228e3ecf47bc}`. **Standing exposure:** available to any holder of Thornwick forest-admin rights — readily obtained, per the findings above — so the acquired forest inherits the full risk of the Thornwick forest.
 
 ---
 
@@ -78,7 +78,7 @@ Written so a Thornwick engineer can reproduce it. Addresses: root DC `.10`, chil
 
 **Step 4 — Forest-root dominance (F4).** Using the `corp\krbtgt` key and both domain SIDs, we forged an inter-realm ticket carrying the root **Enterprise Admins** SID (`…-519`) as an ExtraSid; the parent accepted it (no SID filtering within a forest). Via the referral chain (corp KDC → root KDC service ticket) we read the DA-only `C:\DomainProof\flag.txt` on the root DC, confirming forest-root control (`FLAG_DOMAIN`).
 
-**Step 5 — Read the forest boundary (F6).** Before moving at Ravensworth we read the trust: `trustAttributes=0x8` (forest-transitive), SID filtering on. We confirmed the Step 4 injection **would not cross** and did not attempt it. Instead we enumerated the sanctioned path: `RAVENSWORTH\CrownAccess` (domain-local, gating the `crown` share) has one member — a Foreign Security Principal pointing at `THORNWICK\LegacyAcq` (Universal, SID `…-1106`, currently empty).
+**Step 5 — Read the forest boundary (F6).** We read the trust first: `trustAttributes=0x8` (forest-transitive), SID filtering on — the Step 4 injection **would not cross**, so we did not attempt it. Instead we enumerated the sanctioned path: `RAVENSWORTH\CrownAccess` (domain-local, gating the `crown` share) has one member — a Foreign Security Principal pointing at `THORNWICK\LegacyAcq` (Universal, SID `…-1106`, empty).
 
 **Step 6 — Cross the forest edge (F6).** With forest-root rights we added `corp\svc_erp` to `THORNWICK\LegacyAcq` (`bloodyAD`); its SID, belonging to the Thornwick forest, rode the PAC across the SID-filtered edge. As `svc_erp` the `crown` share flipped to READ; we read `crownjewel.txt` (`FLAG_FOREST`) and removed `svc_erp` from `LegacyAcq`.
 
@@ -100,21 +100,21 @@ Several distinct routes existed; we walked one end-to-end and set the others asi
 
 ## 6. Remediation
 
-This programme is **ordered by how much of the demonstrated chain each item closes per unit of effort — not by severity.** F3/F2 are not the highest CVSS scores, but fixing them breaks the entire path we used, for the least work.
+Ordered by **chain-break per unit of effort** — the most of the demonstrated attack closed for the least work, not by CVSS severity. The demonstrated path is **F1** (entry) → **F2** (crack) → **F3** (replication rights) → **F4** (child→root) → **F6** (cross-forest read); **F5** is an independent parallel road.
 
-1. **Fix the `svc_erp` service account (Low effort, ~1 engineer-day). Closes F2 + F3 + the F4 trigger — the whole of Road B.** Remove the DCSync ACEs from `svc_erp` and audit every non-DC principal for `DS-Replication-Get-Changes*`. Convert service accounts to group-Managed Service Accounts (gMSA) with 120-character managed passwords, eliminating both the weak password and the Kerberoasting exposure.
-2. **Close the credential-free entry (Low effort, ~1 day). Closes F1.** Disable LLMNR, NBT-NS, and mDNS by GPO estate-wide. Fix or remove the `Kessler-BackupProbe` task so it no longer authenticates as a user to an unresolved name (gMSA + correct target). SMB signing is already enforced — keep it, and plan NTLM reduction.
-3. **Remediate AD CS ESC8 (Low–Medium effort, ~1–2 days). Closes the second route (F5).** Disable HTTP web enrollment or enforce HTTPS with Extended Protection for Authentication; restrict enrollment rights. Do this even after item 1 — F5 is independent of the taken path.
-4. **Treat Ravensworth as in scope and govern the trust (Medium effort, ongoing). Closes F6.** Remove the `LegacyAcq → CrownAccess` foreign-principal relationship unless documented as needed; if it must stay, restrict and alert on `LegacyAcq` membership and consider **selective authentication** on the trust. Bring the acquired forest under Thornwick's monitoring and patch regime.
-5. **Credential and tiering programme (Medium–High effort, multi-sprint). Durable defence.** Administrative tiering (Tier-0 isolation so a child compromise is not a forest compromise in practice), LAPS, a password policy banning company/season/year patterns, and detection for Kerberoasting, DCSync from non-DCs, and Responder-style poisoning — the programme that keeps items 1–4 from regressing.
+1. **Remove `svc_erp`'s DCSync rights; migrate service accounts to gMSA (~1 day). Severs F2 + F3 + the F4 trigger — Steps 2–4, the spine of the demonstrated path.** On its own this makes the end-to-end takeover impossible: the entry (F1) still yields `b.okafor`, but that account can no longer replicate the directory, so the climb to forest root dies. *Constraint:* the ERP service must support gMSA; if not, set a 32-char random password on enforced rotation and strip the DCSync ACEs regardless.
+2. **Disable LLMNR/NBT-NS/mDNS by GPO; fix or retire `Kessler-BackupProbe` (~1 day). Severs F1 — the credential-free entry (Step 1).** SMB signing is already enforced; keep it, plan NTLM reduction.
+3. **Disable CA HTTP enrollment, enforce HTTPS + EPA, restrict enrollment rights (~1–2 days). Severs F5 — the independent road to forest root.** Done regardless of 1–2, as F5 shares no prerequisite with them; cheap for the coverage.
+4. **Remove the `LegacyAcq → CrownAccess` relationship (or restrict+alert on it and enable selective authentication) (~2 days + ongoing). Severs F6 — the demonstrated cross-forest read (Steps 5–6).** Placed fourth, not first, deliberately: this link is only reachable *after* forest-root compromise, which items 1–3 already prevent — so it is the backstop that still protects the crown jewels if the forest is ever re-compromised, not the first lever. *Constraint:* selective authentication will block any legitimate Thornwick→Ravensworth access currently using the trust — inventory that first.
+5. **Tiering (Tier-0), LAPS, password policy banning company/season/year patterns, and detection for Kerberoasting/DCSync/poisoning (multi-sprint). Severs no additional demonstrated link.** Last by design: it buys durability and attacker cost rather than chain reduction per unit of effort, and keeps items 1–4 from regressing.
 
-Items 1–3 are each roughly a day and together break both routes to forest root and the entry that feeds them; item 4 protects the crown jewels even if the forest is later re-compromised; item 5 is the long-term investment.
+**Why this order is optimal:** item 1 severs three links for one day — the largest chain-break-per-effort available, alone enough to stop the demonstrated takeover; item 2 removes the entry; item 3 closes the only road untouched by 1–2; item 4's link sits behind the compromise 1–3 prevent, so it ranks fourth; item 5 adds no new chain-break and ranks last.
 
 ---
 
 ## 7. Limitations
 
-- **What we did not test.** Only the three in-scope DCs were assessed; no workstations or member servers were on the segment. No kernel, service, or container exploitation, denial-of-service, or destructive testing was attempted (all out of scope).
+- **What we did not test.** Only the three in-scope DCs were assessed; no other hosts were on the segment. No kernel/service/container exploitation, denial-of-service, or destructive testing was attempted (all out of scope).
 - **What we could not fully prove.** ESC8 (F5) was confirmed vulnerable but **not exploited end-to-end** — the coercion-and-relay step needed elevated privilege unavailable on the test platform; we assess it exploitable with high confidence from the confirmed configuration. Separately, root DCSync over DRSUAPI failed on a cross-realm ticket checksum; forest-root control was instead proven by reading a Domain-Admin-only file on the root DC and performing a forest-root LDAP write (Step 6) — equivalent proof of dominance.
 - **What we wrote into the estate and removed.** Exactly one object change: `corp\svc_erp` was added to `THORNWICK\LegacyAcq` to open the cross-forest door, then **removed and verified empty** (Ravensworth briefly still granted access afterward — a token-cache artifact, not a residual change). No accounts were created, disabled, deleted, or reset; no GPO, schema, or trust objects modified; no services installed. Captured hashes, passwords, and tickets exist only on the attack box.
 
@@ -124,6 +124,6 @@ Items 1–3 are each roughly a day and together break both routes to forest root
 
 We committed `0-plan.md` before touching the estate.
 
-**What it got right.** The primary axis held: "listen before you speak" produced the entry, and the capture-and-crack-over-guessing discipline ran throughout with zero lockout risk. "Read the boundary before you move at it" paid off exactly where the plan predicted — at the forest edge, where we confirmed SID filtering and declined to inject, using the legitimate group door instead. The plan's instinct that one road would be brittle was borne out: ESC8 relay was the one we declined.
+**What it got right.** The primary axis held: "listen before you speak" produced the entry, and the capture-and-crack-over-guessing discipline ran throughout with zero lockout risk. "Read the boundary before you move at it" paid off exactly where predicted — at the forest edge, where we confirmed SID filtering and declined to inject, using the legitimate group door instead.
 
 **What it got wrong.** The plan over-weighted the contingency machinery — active poisoning, NTLM relay, AS-REP roasting from zero — none of which was needed, because the first listener yielded the credential on cue. It mis-located the difficulty: it treated the AD logic as the hard part, when that path was clean and deterministic and the real friction was operational (cross-realm Kerberos configuration on the attack box) — a future multi-forest plan should budget for that setup as a first-class task. Finally, the plan hedged its technique list; the estate chose one clean road, and the distance between that hedge and the single road is itself the lesson.
