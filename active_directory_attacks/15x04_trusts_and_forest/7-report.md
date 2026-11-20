@@ -141,7 +141,7 @@ The standout is **4765**: adding account history is a directory modification and
   netdom trust aldermont.local /domain:trentham.local /EnableSIDHistory   # verify -> "SID history ... No"
   Get-ADTrust -Filter {Target -eq 'trentham.local'} | fl SIDFilteringForestAware,SIDFilteringQuarantined
   ```
-  **The one thing not to do:** never set `/EnableSIDHistory:Yes` on this trust — that single change is what would *open* the forged-SID / SID-history path the estate is currently immune to. **Exact scope:** this concerns only trust B; trust A is intra-forest and is never filtered.
+  **The protection on the acquired trust, named explicitly:** the single control that closes the forged / SID-history cross-forest path is **SID filtering (quarantine — `/EnableSIDHistory:No`)** on trust B. That is *the* protection to enforce on the acquired trust. In this estate it is already enabled, so the remediation is to **keep it enabled and alert on any change**; and — stated plainly as the required action — **if an audit ever finds SID filtering disabled on trust B, re-enabling it (`netdom trust aldermont.local /domain:trentham.local /EnableSIDHistory:No` / quarantine on) is the remediation.** The one thing never to do is set `/EnableSIDHistory:Yes` on this trust — that single change is what would *open* the path the estate is currently immune to. **Exact scope:** this concerns only trust B; trust A is intra-forest and is never filtered.
 - **Boundary B — the actual hole to close: the leftover grant (this is the real fix).** SID filtering is **not** the gap. The **only** thing that let us into Trentham is a native, legitimate grant the filter is designed to honour: `ALDERMONT\LegacyAcq` (a universal group, RID≥1000, belonging to the trusted forest, so it survives filtering) is a foreign-security-principal member of the Trentham domain-local group **`TRENTHAM\CrownAccess`**, which gates `\\TRENTHAM-DC\crown`. Remove that membership on the Trentham side:
   ```
   # on a trentham.local DC:
@@ -154,7 +154,12 @@ The standout is **4765**: adding account history is a directory modification and
   netdom trust trentham.local /domain:aldermont.local /SelectiveAuth:yes
   ```
   then, per Trentham resource that Aldermont legitimately needs, grant the Aldermont principal the **"Allowed to authenticate"** right on that computer object (its ACL), e.g. on `TRENTHAM-DC` for the `crown` share only. **Cost to Trentham:** every legitimate cross-forest access must then be granted per-resource; anything relying on today's blanket forest-wide access breaks until re-permitted, and Trentham's admins own the ongoing overhead of that allow-list. Correct trade, but an operational commitment, not a checkbox. This is specific to **path B (the Trentham crossings)** and touches neither trust A nor the intra-forest paths.
-- **The migration artefact (account history) — specific to the `sIDHistory` path.** Account history should have been **cleared once the migration completed years ago** — it is transitional, not permanent. For our own exercise this is already done: the `sIDHistory` we wrote (the aside) was reverted and read back empty (Closeout, Write path 2). For the *estate*, sweep **both** directories for stray `sIDHistory` values and remove any found, and turn on the **4765/4766** auditing above so the next one is caught the day it is written.
+- **The migration artefact (account history) — specific hygiene action: post-cutover account-history cleanup.** `sIDHistory` is **transitional, not permanent** — it exists only to carry access *during* a migration. The named operational hygiene action that prevents and removes this artefact is **a migration-cleanup step run after cutover**: once a domain migration / acquisition cutover is validated, clearing `sIDHistory` from every migrated account is a **mandatory closing step of the migration runbook** — via ADMT's *Remove SID History*, or:
+  ```
+  Get-ADUser -Filter {sIDHistory -like '*'} -Properties sIDHistory |
+    ForEach-Object { Set-ADUser $_ -Clear sIDHistory }     # run in both aldermont.local and corp.aldermont.local
+  ```
+  Aldermont **skipped that closing step**, which is exactly why the mechanism was still live to abuse years later. For our own exercise the cleanup is already done: the `sIDHistory` we wrote (the aside) was reverted and read back empty (Closeout, Write path 2). For the *estate*, run the sweep above in **both** directories, remove any value found, and turn on the **4765/4766** auditing so the next write is caught the day it happens.
 
 ---
 
@@ -273,7 +278,19 @@ type \\ALDER-ROOT-DC\proof$\filter.txt
 ```
 The Trentham side is byte-for-byte unchanged by both filtered attempts: the only pre-existing `CrownAccess` member is the leftover `LegacyAcq` FSP (the grant we recommend removing above), and neither forged attempt added or altered anything.
 
-**Final state across both directories.** The only two objects ever modified — `LegacyAcq.member` in `aldermont.local` and `svc.backup.sIDHistory` in `corp.aldermont.local` — are both read-back to their original (empty) values above. Every other inventory row was a read (rows 1, 7) or a filtered attempt that changed nothing (rows 2, 4, 6). `trentham.local` holds **no** write of ours.
+**Final-state proof, tied to each exercised item (row by row):**
+
+| # | Exercised item | Final state | Proof |
+|---|----------------|-------------|-------|
+| 1 | `krbtgt` (read via DCSync) | unchanged (never written) | secret only replicated out; `krbtgt` double-reset at closeout further invalidates derived tickets |
+| 2 | forged inter-realm TGT (EA SID) | no persistent change | ticket artefact only — no directory object; invalidated by the `krbtgt` double-reset |
+| 3 | `LegacyAcq.member` | **original (empty)** | before/after read-back, Write path 1 |
+| 4 | forged Trentham-admin SID | no change on Trentham | `4769` rejection; `CrownAccess` membership read-back **unchanged** (Attempted & filtered) |
+| 5 | `svc.backup.sIDHistory` | **original (empty)** | before/after read-back, Write path 2 |
+| 6 | cross-forest `sIDHistory` SID | no change on Trentham | stripped at edge; `CrownAccess` / crown ACL read-back **unchanged**; FLAG_FILTER receipt |
+| 7 | `\\TRENTHAM-DC\crown\crownjewel.txt` (read) | unchanged | read-only; file content not altered |
+
+**Net across both directories:** the only two objects ever modified — `LegacyAcq.member` in `aldermont.local` and `svc.backup.sIDHistory` in `corp.aldermont.local` — are both read-back to their original (empty) values above. Every other row was a read (rows 1, 7) or a filtered attempt that changed nothing (rows 2, 4, 6). `trentham.local` holds **no** write of ours.
 
 ### Everything else
 - **No accounts** were created or modified; **no group** other than `LegacyAcq` was touched; **no ACL** was changed.
