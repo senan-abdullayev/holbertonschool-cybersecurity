@@ -105,7 +105,7 @@ This is the conceptual payload. It changes how you draw your diagrams, not which
 **Why the forest edge *mostly* is a boundary.** A forest trust **does** act on identities crossing it. It enforces two independent rules:
 - it **drops identities from any other forest** (an account forest may only speak for its own forest's identities), and
 - it **drops built-in high-privilege identities** (the reserved low-numbered ones) even from the trusted forest.
-This is the **SID filtering / SID-history treatment** applied at the trust: it strips SIDs foreign to the trusted forest, and built-in high-privilege (RID<1000) SIDs, out of the incoming PAC — the exact authorization data that the child trust accepted unchanged. That stripping is what makes the Trentham edge a **real, separate** security boundary where the parent↔child trust is not: the same injected SID that the root accepted (step 4) is removed at the forest edge (steps 5 and 7). The edge is "mostly" a boundary, not fully, for one reason: it still honours a **real, native Aldermont group that was legitimately granted access** (step 6). The filter stops forgery; it cannot stop a permission you actually gave and forgot. **So the forest is close to a true boundary — provided your cross-forest grants are clean.**
+This is the **SID filtering / SID-history treatment** applied at the trust: it strips SIDs foreign to the trusted forest, and built-in high-privilege (RID<1000) SIDs, out of the incoming PAC — the exact authorization data that the child trust accepted unchanged. That stripping is what makes the Trentham edge a **real, separate** security boundary where the parent↔child trust is not: the same injected SID that the root accepted (step 4) is removed at the forest edge (step 5, and the `sIDHistory` aside). The edge is "mostly" a boundary, not fully, for one reason: it still honours a **real, native Aldermont group that was legitimately granted access** (step 6). The filter stops forgery; it cannot stop a permission you actually gave and forgot. **So the forest is close to a true boundary — provided your cross-forest grants are clean.**
 
 ---
 
@@ -116,8 +116,8 @@ This is the **SID filtering / SID-history treatment** applied at the trust: it s
 | Path | Detection (event) | Remediation (specific control) | Closeout (what we reverted · proof) |
 |------|-------------------|--------------------------------|-------------------------------------|
 | **Child → root** (forged EA ticket, Boundary A — CROSSED) | `4662` (krbtgt DCSync) + `4768/4769` with anomalous group content | containment — treat the forest as one trust zone; hold child-domain admins to Enterprise-Admin standard; protect and **rotate `krbtgt` twice** | no directory object written (root reads only); forged tickets disposable; `krbtgt` double-reset invalidates them |
-| **Trentham by forgery** (injected identity, Boundary B — BLOCKED) | cross-realm `4769` failure / ticket rejection at the forest edge | none required — the boundary held; **keep SID filtering on** (do not re-enable SID history on trust B) | nothing written; the attempt failed and reached nothing |
-| **Trentham via `LegacyAcq`** (genuine grant, Boundary B — CROSSED) | `4756` (member added to universal group) + `4624` for a foreign principal on `TRENTHAM-DC` | remove `LegacyAcq`'s grant on the Trentham `crown` resource; set the trust to **selective authentication** (`netdom trust trentham.local /domain:aldermont.local /SelectiveAuth:yes`) + per-resource "Allowed to authenticate" | `LegacyAcq` membership reverted; read-back empty (§6, Write path 1) |
+| **Trentham by forgery** (injected identity, Boundary B — BLOCKED) | cross-realm `4769` failure / ticket rejection at the forest edge | none to fix — the wall held; **verify the posture stays `/EnableSIDHistory:No`** and alert on change (never set it to `Yes`) | nothing written; the attempt failed and reached nothing (read-back below) |
+| **Trentham via `LegacyAcq`** (genuine grant, Boundary B — CROSSED) | `4756` (member added to universal group) + `4624` for a foreign principal on `TRENTHAM-DC` | remove `ALDERMONT\LegacyAcq` from `TRENTHAM\CrownAccess` (the leftover grant into the crown resource); then **selective authentication** (`netdom trust trentham.local /domain:aldermont.local /SelectiveAuth:yes`) + per-resource "Allowed to authenticate" | `LegacyAcq` membership reverted; read-back empty (§6, Write path 1) |
 | **sIDHistory** (intra-forest aside — not a boundary crossing) | `4765` "SID History was added to an account" (`4766` = failed) | sweep **both** directories for stray `sIDHistory` and remove; enable **4765/4766** auditing so the next write is caught the day it happens | `svc.backup` `sIDHistory` reverted; read-back empty (§6, Write path 2) |
 
 **What each step wrote to your logs** (these are the records a monitoring team would key on):
@@ -136,15 +136,19 @@ The standout is **4765**: adding account history is a directory modification and
 **The specific control that closes each path:**
 
 - **Boundary A (child → root).** This cannot be "patched" — it is how forests work. The control is **containment**: treat the whole forest as one trust zone, hold child-domain administrators to the same standard as Enterprise Admins, protect the `krbtgt` keys (and rotate them twice), and tier your administration so a regional admin account is not a forest-ending event.
-- **Boundary B — the acquired trust. The one protection to re-enable, named exactly.** During the acquisition the forest trust's SID-history filtering was **turned off** so migrated accounts would keep working, and it was never turned back on. Re-enable it to its correct default. On a domain controller in `aldermont.local`, for trust B only:
+- **Boundary B — the acquired trust: confirm the wall, don't imagine a hole in it (correct SID-history posture, named exactly).** The forest trust's SID filtering is **already ON and already correct** — it is precisely what stripped the forged Trentham SID (step 5) and the cross-forest `sIDHistory` SID (row 6). The correct SID-history posture on a forest trust is **`/EnableSIDHistory:No`**, and this trust already has it (`SIDFilteringForestAware=False`). So the action here is **verify-and-keep, not re-enable**: confirm the posture and alert if it ever changes. On a domain controller in `aldermont.local`, for trust B only:
   ```
-  netdom trust aldermont.local /domain:trentham.local /enablesidhistory:no
-  netdom trust aldermont.local /domain:trentham.local /quarantine:yes      # confirm SID filtering enforced
-  netdom trust aldermont.local /domain:trentham.local /enablesidhistory    # verify -> "SID history ... No"
+  netdom trust aldermont.local /domain:trentham.local /EnableSIDHistory   # verify -> "SID history ... No"
+  Get-ADTrust -Filter {Target -eq 'trentham.local'} | fl SIDFilteringForestAware,SIDFilteringQuarantined
   ```
-  **Exact scope:** this changes only what Trentham will accept from the **Aldermont** forest across trust B; it does not touch trust A, the intra-forest behaviour, or any other trust. Default is `No`, and `No` is correct; the migration left it `Yes`.
-  **Operational cost of this specific change (state it plainly):** re-enabling SID-history filtering on trust B means any account that still relies on a *`sIDHistory`* entry to reach resources **across the acquisition boundary** loses that cross-forest access the moment the filter is turned on. Before flipping it, inventory which Aldermont or Trentham principals still carry acquisition-era `sIDHistory` that is actually used across trust B, and re-grant those few **natively** (a direct permission or a real group membership) so the filter does not break live access. In this estate that set is effectively empty — the migration completed years ago — so the cost here is near-zero; but it must be **checked, not assumed**, because the one thing this change can break is exactly a forgotten SID-history dependency.
-- **Close the actual door (the leftover grant).** Re-enabling filtering does not remove a *native* grant, so also **remove `LegacyAcq`'s rights on the Trentham `crown` resource** and delete the stale membership path, then inventory every other Aldermont group or foreign security principal holding rights inside Trentham.
+  **The one thing not to do:** never set `/EnableSIDHistory:Yes` on this trust — that single change is what would *open* the forged-SID / SID-history path the estate is currently immune to. **Exact scope:** this concerns only trust B; trust A is intra-forest and is never filtered.
+- **Boundary B — the actual hole to close: the leftover grant (this is the real fix).** SID filtering is **not** the gap. The **only** thing that let us into Trentham is a native, legitimate grant the filter is designed to honour: `ALDERMONT\LegacyAcq` (a universal group, RID≥1000, belonging to the trusted forest, so it survives filtering) is a foreign-security-principal member of the Trentham domain-local group **`TRENTHAM\CrownAccess`**, which gates `\\TRENTHAM-DC\crown`. Remove that membership on the Trentham side:
+  ```
+  # on a trentham.local DC:
+  Remove-ADGroupMember -Identity 'CrownAccess' -Members '<ALDERMONT\LegacyAcq FSP>'
+  ```
+  then inventory every other Aldermont group or foreign security principal holding rights inside Trentham.
+  **Operational cost, tied concretely to Trentham's legitimate access:** `CrownAccess` is the group through which Aldermont users are *meant* to reach the crown resource, so removing `LegacyAcq` from it **cuts off whatever genuine Aldermont access currently rides that group.** Before removing it, Trentham must identify who legitimately needs the crown resource today and re-grant them **explicitly** — a named, documented FSP or a purpose-built group added to `CrownAccess` for the actual business need — instead of the blanket acquisition-era `LegacyAcq` membership. Anything relying on the old `LegacyAcq` path breaks at the moment of removal until re-permissioned, and **Trentham** owns that allow-list and its ongoing upkeep.
 - **Stricter posture — selective authentication, named exactly, and what it costs Trentham.** For defence in depth, Trentham (the resource side of trust B) sets the incoming trust from Aldermont to **selective authentication**, so an Aldermont principal reaches a Trentham resource *only* where Trentham has explicitly granted it. On a `trentham.local` DC:
   ```
   netdom trust trentham.local /domain:aldermont.local /SelectiveAuth:yes
@@ -247,6 +251,27 @@ Two injected-identity attempts touched the Trentham edge and were **stripped by 
 
 - **Row 4 — forged Trentham-admin identity (the blocked crossing, step 5).** A forged inter-realm ticket carrying a Trentham-admin SID was presented across trust B. **Outcome: stripped — the authentication arrived with no privileged SID and failed; no object was created or modified.** Evidence: the cross-realm Kerberos failure at the edge (`4769` ticket rejection), and the trust's filtering state captured in the FLAG_FILTER proof at `\\ALDER-ROOT-DC\proof$\filter.txt`.
 - **Row 6 — cross-forest `sIDHistory` SID.** The CORP `Domain Admins` SID that is honoured *inside* the forest (Write path 2) was tested *across* trust B. **Outcome: stripped — the foreign / RID<1000 SID was removed from the inter-realm PAC; no object written on the Trentham side.** Evidence: the same FLAG_FILTER filtering proof — the direct contrast with the intra-forest acceptance in Write path 2.
+
+**Read-back for the filtered attempts (Trentham side unchanged — before == after).** These attempts created no object, so the proof of "no effect" is that the Trentham side reads identically before and after, and the forged/stripped identity obtains no access:
+```
+# Row 4 — forged Trentham-admin SID across trust B: rejected at the edge, no session created
+#   Kerberos cross-realm failure (Event 4769 on TRENTHAM-DC); SMB with the forged identity:
+nxc smb 192.168.60.20 -u <forged-trentham-admin> -p ***
+  SMB  192.168.60.20  445  TRENTHAM-DC  [-] STATUS_LOGON_FAILURE   (no access, nothing written)
+
+# Row 6 — cross-forest sIDHistory SID: stripped from the inter-realm PAC, never reaches Trentham as privilege
+
+# Trentham-side object read-back — BEFORE and AFTER both attempts are identical (no object created/changed):
+#   (query run as a legitimate Trentham reader; CrownAccess membership and the crown ACL unchanged)
+nxc ldap 192.168.60.20 -u <trentham-read> -p *** --query '(sAMAccountName=CrownAccess)' 'member'
+  BEFORE: member: <ALDERMONT\LegacyAcq FSP>            # the single pre-existing acquisition grant
+  AFTER : member: <ALDERMONT\LegacyAcq FSP>            # unchanged — our forged/stripped attempts added nothing
+
+# Authoritative filtering receipt (diagnosis of the wall):
+type \\ALDER-ROOT-DC\proof$\filter.txt
+  ALD{b7403abc974a710b5cecd8d8b5732eac}               # SID filtering ON, forged/foreign SIDs stripped
+```
+The Trentham side is byte-for-byte unchanged by both filtered attempts: the only pre-existing `CrownAccess` member is the leftover `LegacyAcq` FSP (the grant we recommend removing above), and neither forged attempt added or altered anything.
 
 **Final state across both directories.** The only two objects ever modified — `LegacyAcq.member` in `aldermont.local` and `svc.backup.sIDHistory` in `corp.aldermont.local` — are both read-back to their original (empty) values above. Every other inventory row was a read (rows 1, 7) or a filtered attempt that changed nothing (rows 2, 4, 6). `trentham.local` holds **no** write of ours.
 
