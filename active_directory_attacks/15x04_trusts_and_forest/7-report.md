@@ -143,6 +143,7 @@ The standout is **4765**: adding account history is a directory modification and
   netdom trust aldermont.local /domain:trentham.local /enablesidhistory    # verify -> "SID history ... No"
   ```
   **Exact scope:** this changes only what Trentham will accept from the **Aldermont** forest across trust B; it does not touch trust A, the intra-forest behaviour, or any other trust. Default is `No`, and `No` is correct; the migration left it `Yes`.
+  **Operational cost of this specific change (state it plainly):** re-enabling SID-history filtering on trust B means any account that still relies on a *`sIDHistory`* entry to reach resources **across the acquisition boundary** loses that cross-forest access the moment the filter is turned on. Before flipping it, inventory which Aldermont or Trentham principals still carry acquisition-era `sIDHistory` that is actually used across trust B, and re-grant those few **natively** (a direct permission or a real group membership) so the filter does not break live access. In this estate that set is effectively empty — the migration completed years ago — so the cost here is near-zero; but it must be **checked, not assumed**, because the one thing this change can break is exactly a forgotten SID-history dependency.
 - **Close the actual door (the leftover grant).** Re-enabling filtering does not remove a *native* grant, so also **remove `LegacyAcq`'s rights on the Trentham `crown` resource** and delete the stale membership path, then inventory every other Aldermont group or foreign security principal holding rights inside Trentham.
 - **Stricter posture — selective authentication, named exactly, and what it costs Trentham.** For defence in depth, Trentham (the resource side of trust B) sets the incoming trust from Aldermont to **selective authentication**, so an Aldermont principal reaches a Trentham resource *only* where Trentham has explicitly granted it. On a `trentham.local` DC:
   ```
@@ -170,13 +171,19 @@ The durable takeaway is the **method**, not the list: enumerate every trust and 
 
 ## 6. Closeout — every object we wrote, and the read-back proving it is gone
 
-We committed to minimal, reversible changes and to proving removal with an **independent read-back** for each write path. There were **exactly two** directory writes — one in `aldermont.local`, one in `corp.aldermont.local` — both reverted and both evidenced below; **no** object was written in `trentham.local` (we authenticated in and read a single file, nothing more). The complete per-directory inventory:
+We committed to minimal, reversible changes and to proving removal with an **independent read-back** for every write. Below is the **complete inventory of every item we wrote *or attempted*** across both Aldermont domains **and** Trentham — each with its object/attribute, the action, the outcome, and where the evidence sits. There were **exactly two directory writes** (both reverted); everything else was a read or a ticket/PAC attempt that modified **no** directory object.
 
-| Directory / forest | Object · attribute written | Status |
-|--------------------|----------------------------|--------|
-| `aldermont.local` (root) | `CN=LegacyAcq` · `member` | performed → **reverted** (read-back below) |
-| `corp.aldermont.local` (child) | `CN=svc.backup` · `sIDHistory` | performed → **reverted** (read-back below) |
-| `trentham.local` (acquired) | **none** — read-only (`\\TRENTHAM-DC\crown\crownjewel.txt`) | no write |
+| # | Directory / forest | Object · attribute | Action | Outcome | Evidence |
+|---|--------------------|--------------------|--------|---------|----------|
+| 1 | `corp.aldermont.local` (child) | `krbtgt` secret | **read** (DCSync replication) | key obtained; **no write-back** | Event 4662 (§4) |
+| 2 | `aldermont.local` (root) | forged inter-realm TGT (EA SID in PAC) | **attempted** (ticket presented) | **CROSSED** — root admin; read `C:\RootOnly\*` | 4768/4769 (§4); root-file reads (step 4) |
+| 3 | `aldermont.local` (root) | `CN=LegacyAcq` · `member` | **written** | performed → **reverted** | read-back, Write path 1 |
+| 4 | `trentham.local` (acquired) | forged Trentham-admin SID in PAC | **attempted** (ticket presented) | **BLOCKED** — stripped by SID filtering; reached nothing | cross-realm 4769 failure (§4); "Attempted & filtered" below |
+| 5 | `corp.aldermont.local` (child) | `CN=svc.backup` · `sIDHistory` | **written** (intra-forest) | performed → **reverted** | read-back, Write path 2; Event 4765 |
+| 6 | `trentham.local` (acquired) | injected `sIDHistory` SID crossing the edge | **attempted** (cross-forest) | **STRIPPED** by SID filtering; no effect in Trentham | FLAG_FILTER proof; "Attempted & filtered" below |
+| 7 | `trentham.local` (acquired) | `\\TRENTHAM-DC\crown\crownjewel.txt` | **read** (via genuine `LegacyAcq` grant) | read; **no write** | 4624 foreign principal (§4) |
+
+Only rows **3** and **5** wrote to the directory; both are fully reverted with read-back below. Rows **2, 4, 6** are ticket/PAC attempts that modified **no** directory object (rows 4 and 6 were filtered at the Trentham edge and reached nothing). Rows **1, 7** are reads. `trentham.local` holds **no** write of ours.
 
 ### Write path 1 — group membership (performed, then reverted)
 
@@ -233,6 +240,15 @@ nxc ldap 192.168.60.11 -u r.bello -p *** --query '(sAMAccountName=svc.backup)' '
   [+] Response for object: CN=svc.backup,CN=Users,DC=corp,...     (no sIDHistory line)
 ```
 The `sIDHistory` attribute returned to its exact pre-change value (empty) — the migration artefact we introduced to prove the path is fully removed. (The lab's own `99-reset-lab.ps1` strips injected `sIDHistory` as well, so nothing of ours persists either way.)
+
+### Attempted, filtered — no directory object written (inventoried for completeness)
+
+Two injected-identity attempts touched the Trentham edge and were **stripped by SID filtering**; neither wrote anything to any directory, and neither reached Trentham. They are recorded here so the **attempted** set is complete, not only the written set.
+
+- **Row 4 — forged Trentham-admin identity (the blocked crossing, step 5).** A forged inter-realm ticket carrying a Trentham-admin SID was presented across trust B. **Outcome: stripped — the authentication arrived with no privileged SID and failed; no object was created or modified.** Evidence: the cross-realm Kerberos failure at the edge (`4769` ticket rejection), and the trust's filtering state captured in the FLAG_FILTER proof at `\\ALDER-ROOT-DC\proof$\filter.txt`.
+- **Row 6 — cross-forest `sIDHistory` SID.** The CORP `Domain Admins` SID that is honoured *inside* the forest (Write path 2) was tested *across* trust B. **Outcome: stripped — the foreign / RID<1000 SID was removed from the inter-realm PAC; no object written on the Trentham side.** Evidence: the same FLAG_FILTER filtering proof — the direct contrast with the intra-forest acceptance in Write path 2.
+
+**Final state across both directories.** The only two objects ever modified — `LegacyAcq.member` in `aldermont.local` and `svc.backup.sIDHistory` in `corp.aldermont.local` — are both read-back to their original (empty) values above. Every other inventory row was a read (rows 1, 7) or a filtered attempt that changed nothing (rows 2, 4, 6). `trentham.local` holds **no** write of ours.
 
 ### Everything else
 - **No accounts** were created or modified; **no group** other than `LegacyAcq` was touched; **no ACL** was changed.
