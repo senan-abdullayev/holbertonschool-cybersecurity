@@ -14,23 +14,21 @@
 
 ## 1. The estate — what you actually have
 
-Aldermont is not one network. It is **three separate directories that agreed to trust each other.** Those agreements — not the network diagram — are the real map of who can reach what. Here is the whole estate on one picture:
+Aldermont is not one network. It is **three separate directories that agreed to trust each other.** Those trust agreements — not the network diagram — decide who can reach what. Here is the whole estate in one picture:
 
 ```
-        ALDERMONT  (the parent company directory)
-        aldermont.local  — the top of the house
-              |
-              |  Trust A: parent & child, SAME company directory
-              |           (no gate between them)
-              |
-        CORP   (a regional branch, run by a different team)
-        corp.aldermont.local   <-- our starting account lives here
+   aldermont.local          HEAD OFFICE (the top of the house)
+        |
+        |   Trust A: parent and child of the SAME company.
+        |            No gate on this link - identities pass through unchanged.
+        |
+   corp.aldermont.local     REGIONAL BRANCH   (our starting account is here)
 
-        ALDERMONT  <===========>  TRENTHAM   (a company Aldermont bought)
-                   Trust B: two                trentham.local
-                   DIFFERENT company
-                   directories, linked
-                   (this link has a gate)
+
+   aldermont.local  ===[ Trust B ]===  trentham.local
+   HEAD OFFICE                          ACQUIRED COMPANY (a separate company)
+                 Two DIFFERENT companies, linked.
+                 There IS a gate on this link.
 ```
 
 The three directories, in plain terms:
