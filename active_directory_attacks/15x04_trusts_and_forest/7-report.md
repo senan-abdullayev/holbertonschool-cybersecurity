@@ -136,7 +136,7 @@ The standout is **4765**: adding account history is a directory modification and
 **The specific control that closes each path:**
 
 - **Boundary A (child → root).** This cannot be "patched" — it is how forests work. The control is **containment**: treat the whole forest as one trust zone, hold child-domain administrators to the same standard as Enterprise Admins, protect the `krbtgt` keys (and rotate them twice), and tier your administration so a regional admin account is not a forest-ending event.
-- **Boundary B — the acquired trust: the protection to enforce, and what enforcing it costs Trentham.** **Remediation action, named exactly: enforce SID filtering (quarantine) on trust B by setting the SID-history posture to `/EnableSIDHistory:No`.** This is *the* protection on the acquired trust — the single control that closes the forged / `sIDHistory` cross-forest path (it is what stripped the forged Trentham SID in step 5 and the cross-forest `sIDHistory` SID in row 6). The command, on a domain controller in `aldermont.local`, for trust B only:
+- **Boundary B — the acquired trust: the control that should be re-enabled, and what it costs Trentham.** **The specific control that should be re-enabled on the acquired trust is SID filtering (quarantine) — the SID-history posture `/EnableSIDHistory:No` on trust B.** It is *the* protection on the acquired trust — the single control that closes the forged / `sIDHistory` cross-forest path (it is what stripped the forged Trentham SID in step 5 and the cross-forest `sIDHistory` SID in row 6). The remediation command, on a domain controller in `aldermont.local`, for trust B only:
   ```
   netdom trust aldermont.local /domain:trentham.local /EnableSIDHistory:No   # enforce / re-enable the wall
   ```
