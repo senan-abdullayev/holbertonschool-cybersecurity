@@ -44,15 +44,20 @@ Two links hold it together:
 | **Trust A** | `corp` ⇄ `aldermont` | branch ↔ head office — **the same company's directory**, with no gate between them |
 | **Trust B** | `aldermont` ⇄ `trentham` | Aldermont ↔ an **acquired, separate company**, with a gate on the link |
 
-**Who can reach what (this is the part that matters):**
+**First, one distinction that the rest of this report depends on.** A trust decides **whose login the other side will accept** — it does **not**, by itself, decide **what that login is allowed to open** once it is in. What anyone can actually read or change on the far side is still set by the ordinary permissions on each folder, share, server, and account over there. So "can authenticate across a trust" and "can read a given file" are two different questions. Keep that split in mind for both links:
+
+- **Trust A (branch → head office).** Head office accepts a login coming from the branch **exactly as the branch presents it** — it does not re-check or strip anything about that login. For an ordinary branch user that just means their normal account is recognised at head office, and they still only see what head office's permissions grant them. The danger is the *other* case: because nothing on this link is re-checked, someone who **fully controls the branch** can present a login that *claims to be a head-office administrator*, and head office accepts the claim. An administrator's login carries an administrator's permissions — so that one unchecked claim is what turns control of the branch into control of head office. That is exactly what we did.
+- **Trust B (head office → Trentham).** Trentham **will** accept a login from Aldermont — but the gate on this link **strips any faked or borrowed high-powered identity** before Trentham ever sees it, so you cannot get in by *claiming* to be a Trentham administrator (we tried; it was thrown out). And even a genuine Aldermont login that is accepted can still only reach **what Trentham's own permissions have granted it** — authenticating across the trust is not permission to read anything. We reached exactly one Trentham file, for exactly one reason: a **real, old permission** (an Aldermont group that was given access inside Trentham during the acquisition and never removed) that the gate correctly let through.
+
+**Who can reach what, in a table (same two points):**
 
 | Starting point | Can they reach… | Result | Why |
 |----------------|-----------------|--------|-----|
-| the **branch** admin (our account) | **head office** (the root) | **Yes — total control** | there is **no gate** between a branch and head office; an identity made in the branch is accepted at head office unchanged |
-| the **branch/head-office** side | **Trentham**, by faking a Trentham identity | **No** | the gate on Trust B **throws out faked identities** before Trentham ever sees them |
-| the **branch/head-office** side | **Trentham**, using a *real* leftover permission | **Yes** | one Aldermont group was given real access inside Trentham during the acquisition and never un-granted; the gate lets a *genuine* permission through |
+| the **branch** admin (our account) | **head office** (the root) | **Yes — we gained full control** | the link accepts the branch's login unchecked, so the branch can present an *administrator's* identity and head office honours it; that login then has an administrator's permissions |
+| the **branch/head-office** side | **Trentham**, by **claiming** a Trentham identity | **No** | the gate on Trust B **strips the faked identity** before Trentham sees it — a claimed identity is not authentication, and it buys no access |
+| the **branch/head-office** side | **Trentham**, using a **real leftover permission** | **Yes — one file** | a genuine Aldermont group still held real access inside Trentham; authentication across the trust *plus* that standing permission is what let us read the file — not the trust alone |
 
-In one line: **head office is wide open from the branch, and Trentham is protected against forgery but not against a forgotten permission.**
+In one line: **head office is wide open from the branch because the branch's login is never re-checked, while Trentham is protected against faked identities but not against a genuine permission that was left behind — and in both cases, crossing the trust only decides whose login is accepted, not what it is allowed to open.**
 
 The one sentence to circulate internally:
 
