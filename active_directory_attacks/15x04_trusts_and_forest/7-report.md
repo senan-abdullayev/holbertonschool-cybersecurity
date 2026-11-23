@@ -145,12 +145,13 @@ The standout is **4765**: adding account history is a directory modification and
   Remove-ADGroupMember -Identity 'CrownAccess' -Members '<ALDERMONT\LegacyAcq FSP>'
   ```
   then inventory every other Aldermont group or foreign security principal holding rights inside Trentham, and remove any not tied to a current business need. **Operational cost, tied concretely to Trentham's legitimate access:** `CrownAccess` is the group through which Aldermont users are *meant* to reach the crown resource, so removing `LegacyAcq` cuts off whatever genuine Aldermont access currently rides that blanket group. Before removing it, Trentham identifies who legitimately needs the crown resource today and re-grants them **explicitly** — a named, documented principal or a purpose-built group added to `CrownAccess` for the actual need — instead of the acquisition-era `LegacyAcq` membership. Anything relying on the old path breaks at the moment of removal until re-permissioned, and **Trentham** owns that allow-list and its upkeep.
-- **Boundary B — SID filtering is the wall that already WORKS; it is NOT the vulnerability, only a control to keep switched on.** The client must not mistake this for the fix. SID filtering on trust B is the control that **stripped our forged Trentham identity (step 5) and our cross-forest `sIDHistory` SID (row 6)** — it did exactly its job, and it is already correctly enabled (`/EnableSIDHistory:No`, `SIDFilteringForestAware=False`). The only action here is to **keep it enabled and alert on change**, and — stated for completeness — to **re-enable it if an audit ever finds it relaxed**, because `/EnableSIDHistory:Yes` would be the one change that opens the path the estate is otherwise immune to:
+- **Boundary B — SID filtering: the wall that already WORKS. This is NOT the vulnerability and there is no fix to apply to it.** The client must not mistake this control for the finding. SID filtering on trust B is what **stripped our forged Trentham identity (step 5) and our cross-forest `sIDHistory` SID (row 6)** — it did exactly its job.
+  **Current posture, anchored as the evidence that the wall is already up.** The trust's configured filtering state is **`SIDFilteringForestAware = False`** and **`SIDFilteringQuarantined = True`** — SID-history filtering is enforced *now*, which is precisely why step 5 and row 6 were stripped. That state is the evidence of the existing posture; confirm/monitor it (it is a verification, not a change we made and not a remediation):
   ```
-  netdom trust aldermont.local /domain:trentham.local /EnableSIDHistory      # verify -> expect "SID history ... No"
-  netdom trust aldermont.local /domain:trentham.local /EnableSIDHistory:No   # re-enable ONLY if ever found relaxed
+  Get-ADTrust -Filter {Target -eq 'trentham.local'} | fl Name,SIDFilteringForestAware,SIDFilteringQuarantined
+  netdom trust aldermont.local /domain:trentham.local /EnableSIDHistory   # confirm -> "SID history ... No"
   ```
-  **The distinction that matters for the client: the wall is not the hole.** The hole is the leftover grant above — which SID filtering is *designed to let through*, because it is a genuine permission carried by a native forest principal. Tightening or "fixing" SID filtering changes nothing in this finding, because it was never the weakness; the weakness is the stale membership. **Scope:** this concerns only trust B; trust A is intra-forest and is never filtered.
+  Because the posture is already correct, **the remediation for this finding is not a SID-filtering change** — it is solely the `LegacyAcq → CrownAccess` removal above. The only SID-filtering action is custodial: keep it enabled, alert on change, and re-enable it *only if a future audit ever finds it relaxed* (`/EnableSIDHistory:Yes` would be the one change that opens the path). **The distinction that matters: the wall is not the hole.** The hole is the leftover grant, which SID filtering is *designed to let through* because it is a genuine permission carried by a native forest principal — so tightening or "fixing" SID filtering changes nothing here; the weakness is the stale membership. **Scope:** this concerns only trust B; trust A is intra-forest and is never filtered.
 - **Stricter posture — selective authentication, named exactly, and what it costs Trentham.** For defence in depth, Trentham (the resource side of trust B) sets the incoming trust from Aldermont to **selective authentication**, so an Aldermont principal reaches a Trentham resource *only* where Trentham has explicitly granted it. On a `trentham.local` DC:
   ```
   netdom trust trentham.local /domain:aldermont.local /SelectiveAuth:yes
@@ -195,6 +196,17 @@ We committed to minimal, reversible changes and to proving removal with an **ind
 | 7 | `trentham.local` (acquired) | `\\TRENTHAM-DC\crown\crownjewel.txt` | **read** (via genuine `LegacyAcq` grant) | read; **no write** | 4624 foreign principal (§4) |
 
 Only rows **3** and **5** wrote to the directory; both are fully reverted with read-back below. Rows **2, 4, 6** are ticket/PAC attempts that modified **no** directory object (rows 4 and 6 were filtered at the Trentham edge and reached nothing). Rows **1, 7** are reads. `trentham.local` holds **no** write of ours.
+
+**The closeout splits cleanly into two groups — keep them separate:**
+
+- **Group A — directory writes we performed (exactly two; both reverted, each with a before/after read-back).** These are the only objects we changed:
+  - Row 3 · `aldermont.local` · `LegacyAcq.member` — **before:** empty → **after revert:** empty (Write path 1).
+  - Row 5 · `corp.aldermont.local` · `svc.backup.sIDHistory` — **before:** empty → **after revert:** empty (Write path 2).
+- **Group B — filtered cross-forest attempts (no write occurred; proof is the unchanged target object + edge rejection).** These wrote nothing, so the "before/after" is that the target object is **identical** across the attempt:
+  - Row 4 · forged Trentham-admin SID — target `TRENTHAM\CrownAccess.member` **unchanged** (before == after); forged login rejected at the edge (`4769`).
+  - Row 6 · cross-forest `sIDHistory` SID — target `TRENTHAM\CrownAccess.member` **unchanged** (before == after); SID stripped from the inter-realm PAC. (The `sIDHistory` attribute this path used is itself read back empty under Group A, row 5.)
+
+Group A is "we wrote it, here it is gone"; Group B is "we attempted it, nothing was ever written." The detailed read-backs for both groups follow.
 
 ### Write path 1 — group membership (performed, then reverted)
 
